@@ -1,0 +1,161 @@
+/**
+ * SISTEM PENGURUSAN TUNTUTAN ELAUN RELA - BATU PAHAT
+ * Fail: Utility.gs (Penyediaan Induk Database, Log Keselamatan & Migrasi)
+ * 
+ * Mengelola skema pangkalan data spreadsheet standard, migrasi format data lapuk,
+ * serta menulis jejak audit-trail logs untuk setiap percubaan log masuk sistem.
+ */
+
+// ======================================================================
+// 1. BINAAN PANGKALAN DATA INDUK AUTOMATIK (SETUP TAB & PARAMETER LALAI)
+// ======================================================================
+function setup() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  // Penjana nama lajur hari melintang harian (D1 hingga D31)
+  const daysHeaders = Array.from({length: 31}, (_, i) => 'D' + (i+1));
+  
+  const sheetsConfig = {
+    'Settings': ['Key', 'Value'],
+    'Locations': ['ID', 'Nama Penuh', 'Singkatan', 'Format'],
+    'Supervisors': ['ID Log Masuk', 'Nama Paparan', 'ID Sektor', 'Email', 'Kata Laluan'],
+    'Members': ['ID', 'ID Lokasi', 'Nama Penuh', 'No KP', 'No Tel', 'Pangkat', 'Kadar RM', 'Bank', 'No Akaun', 'No Ahli RELA', 'SME'],
+    'Attendance': ['Kunci Rekod', ...daysHeaders], // Skema Melintang Dinamik 32 Lajur
+    'Roster': ['Kunci Rekod', ...daysHeaders],     // Skema Melintang Dinamik 32 Lajur
+    'LoginLogs': ['Timestamp', 'Role', 'UserID', 'Status', 'Note']
+  };
+
+  // 1. Jalankan pra-saringan & migrasi automatik sekiranya dikesan pangkalan data lama (Vertical layout)
+  migrateToHorizontal_('Attendance');
+  migrateToHorizontal_('Roster');
+
+  // 2. Jalankan binaan sheet standard sekiranya belum wujud
+  for (let sheetName in sheetsConfig) {
+    let sheet = ss.getSheetByName(sheetName);
+    if (!sheet) {
+      sheet = ss.insertSheet(sheetName);
+      sheet.appendRow(sheetsConfig[sheetName]);
+      sheet.getRange(1, 1, 1, sheetsConfig[sheetName].length)
+           .setFontWeight("bold").setBackground("#0f172a").setFontColor("#ffffff");
+      
+      // Masukkan tetapan konfigurasi standard sekiranya dibina baharu
+      if (sheetName === 'Settings') {
+        const defaults = [
+          ['admin_pass_hash', sha256_('ku2man')], // Kata laluan lalai admin: ku2man (Sila tukar serta-merta)
+          ['admin_email', 'afendie@rela.gov.my'],
+          ['report_daerah', 'RELA DAERAH BATU PAHAT'],
+          ['report_disediakan', 'PEMBANTU TADBIR'],
+          ['report_disemak', 'PEGAWAI RELA DAERAH'],
+          ['report_disahkan', 'PENGARAH RELA NEGERI'],
+          ['ot_rule_active', 'true'],
+          ['ot_normal_max_hrs', '8'],
+          ['ot_rate_per_hr', '8.00'],
+          ['ot_enabled_locations', 'L1778964557876'],
+          ['nbc_incentive_rate', '30.00'],
+          ['nbc_enabled_locations', 'L1778776399751,L1779224068053,L1779224106777,L1779224134764,L1779224161507'],
+          ['github_scanner_url', 'https://afendie.github.io/pembaca-qr/'],
+          ['github_preview_url', 'https://afendie.github.io/preview/'],
+          ['allow_supervisor_member_crud', 'false'], // Lalai: Sekat akses Penyelia daripada CRUD ahli demi integriti
+          
+          // Parameter laporan dinamik lalai
+          ['title_b_standard', 'RUMUSAN DAFTAR KEDATANGAN ANGGOTA RELA YANG BERTUGAS DI {loc}'],
+          ['title_b_nbc', 'RUMUSAN PENGESAHAN PENUGASAN DAN PEMBAYARAN ELAUN SERTA INSENTIF PENUGASAN KOLABORASI RELA - PGA BAGI KAWALAN SEMPADAN NEGARA'],
+          ['title_bank_standard', 'RUMUSAN KENYATAAN MAKLUMAT AKAUN BANK ANGGOTA RELA YANG BERTUGAS'],
+          ['title_bank_nbc', 'RUMUSAN KENYATAAN MAKLUMAT TUNTUTAN ELAUN SERTA INSENTIF ANGGOTA DALAM PENUGASAN KOLABORASI RELA - PGA BAGI KAWALAN SEMPADAN NEGARA'],
+          ['title_pengakuan_standard', 'PENGAKUAN TUNTUTAN ELAUN ANGGOTA RELA BAGI PENUGASAN DI PEJABAT {loc}'],
+          ['title_pengakuan_nbc', 'PENGAKUAN TUNTUTAN ELAUN SERTA INSENTIF ANGGOTA DALAM PENUGASAN KOLABORASI RELA - PGA BAGI KAWALAN SEMPADAN NEGARA']
+        ];
+        defaults.forEach(d => sheet.appendRow(d));
+      }
+    } else {
+      // Pastikan pengepala Members sentiasa lengkap dengan 11 lajur
+      if (sheetName === 'Members') {
+        const headerRow = sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), 11)).getValues()[0];
+        if (headerRow.length < 11 || !headerRow[9] || !headerRow[10]) {
+          sheet.getRange(1, 1, 1, 11).setValues([sheetsConfig['Members']])
+               .setFontWeight("bold").setBackground("#0f172a").setFontColor("#ffffff");
+        }
+      }
+    }
+  }
+  return "Selesai! Pangkalan Data Master RELA - BATU PAHAT Berjaya Dipasang.";
+}
+
+// ======================================================================
+// 2. MIGRASI DATA VERTIKAL LAMA KE FORMAT MELINTANG SECARA AUTOMATIK
+// ======================================================================
+function migrateToHorizontal_(sheetName) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(sheetName);
+  if (!sheet) return;
+
+  const lastCol = sheet.getLastColumn();
+  if (lastCol === 0) return;
+
+  const headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  // Sekiranya bilangan lajur sudah melebihi 2, sheet telah dinaik taraf ke susun atur melintang
+  if (headers.length > 2) return;
+
+  const rawData = sheet.getDataRange().getValues().slice(1);
+  const migratedGroups = {}; // rowKey -> Array(31) bagi hari penugasan
+
+  rawData.forEach(row => {
+    const flatKey = String(row[0]).trim();
+    const val = String(row[1]).trim();
+    if (!flatKey) return;
+
+    // Parsing selamat dari kanan ke kiri untuk mengelakkan ralat jika locId mengandungi tanda sempang (-)
+    const parts = flatKey.split('-');
+    const len = parts.length;
+    if (len < 5) return;
+
+    const day = parseInt(parts[len - 1], 10);
+    const month = parts[len - 2];
+    const year = parts[len - 3];
+    const memId = parts[len - 4];
+    const locId = parts.slice(0, len - 4).join('-');
+
+    const rowKey = `${locId}-${memId}-${year}-${month}`;
+
+    if (!migratedGroups[rowKey]) {
+      migratedGroups[rowKey] = Array(31).fill('');
+    }
+    if (day >= 1 && day <= 31) {
+      migratedGroups[rowKey][day - 1] = val;
+    }
+  });
+
+  // Kosongkan sheet lama dan pasang skema melintang baharu
+  sheet.clear();
+  const newHeader = ['Kunci Rekod', ...Array.from({length: 31}, (_, i) => 'D' + (i+1))];
+  sheet.appendRow(newHeader);
+  sheet.getRange(1, 1, 1, newHeader.length)
+       .setFontWeight("bold").setBackground("#0f172a").setFontColor("#ffffff");
+
+  // Tulis semua data migrasi secara kelompok besar (Bulk Write)
+  const rowsToWrite = [];
+  for (let rowKey in migratedGroups) {
+    rowsToWrite.push([rowKey, ...migratedGroups[rowKey]]);
+  }
+
+  if (rowsToWrite.length > 0) {
+    sheet.getRange(2, 1, rowsToWrite.length, 32).setValues(rowsToWrite);
+  }
+}
+
+// ======================================================================
+// 3. LOG MASUK JEJAK AUDIT (AUDIT TRAIL LOGS)
+// ======================================================================
+function logLogin_(role, userId, status, note) {
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    let sheet = ss.getSheetByName("LoginLogs");
+    if (!sheet) {
+      sheet = ss.insertSheet("LoginLogs");
+      sheet.appendRow(["Timestamp", "Role", "UserID", "Status", "Note"]);
+      sheet.getRange(1, 1, 1, 5).setFontWeight("bold").setBackground("#0f172a").setFontColor("#ffffff");
+    }
+    sheet.appendRow([new Date(), role, userId, status, note || ""]);
+  } catch(e) {
+    console.error("Gagal merekod jejak audit: " + e.message);
+  }
+}
