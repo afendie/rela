@@ -58,18 +58,54 @@
     const m = (state.membersMap && state.membersMap[mId]) || state.db.members.find(x => x.id === mId) || {};
     const loc = (state.locId === 'all' || state.allowedLocs.includes(',') || state.page === 'reports') ? m.locId : state.locId;
 
+    // Parse kadar tersuai insentif mengikut cawangan
+    let nbcCustomRates = {};
+    try {
+      nbcCustomRates = JSON.parse(state.db.settings.nbc_custom_rates_json || '{}');
+    } catch(e) {
+      nbcCustomRates = {};
+    }
+
     // Dioptimumkan: Menggunakan parameter tetapan yang telah dipra-proses di peringkat permulaan render
     const sObj = state.parsedSettings || {
       otActive: state.db.settings.ot_rule_active === 'true',
       otMaxHrs: parseFloat(state.db.settings.ot_normal_max_hrs || 8),
       otRate: parseFloat(state.db.settings.ot_rate_per_hr || 8.00),
       dailyIncRate: parseFloat(state.db.settings.nbc_incentive_rate || 30.00),
+      smeRate: parseFloat(state.db.settings.sme_rate_per_hr || 1.00),
       otLocs: (state.db.settings.ot_enabled_locations || '').split(','),
-      enabledLocs: (state.db.settings.nbc_enabled_locations || '').split(',')
+      enabledLocs: (state.db.settings.nbc_enabled_locations || '').split(','),
+      smeLocs: (state.db.settings.sme_enabled_locations || '').split(','),
+      nbcCustomRates: nbcCustomRates
     };
 
     const isOtEnabledForLoc = sObj.otLocs.includes(loc);
     const isNbcEnabled = sObj.enabledLocs.includes(loc);
+    const isSmeEnabledForLoc = (sObj.smeLocs || []).includes(loc);
+
+    // Ambil kadar insentif spesifik lokasi ini atau gunakan kadar standard sebagai sandaran
+    const locIncentiveRate = (sObj.nbcCustomRates && sObj.nbcCustomRates[loc] !== undefined)
+      ? parseFloat(sObj.nbcCustomRates[loc])
+      : sObj.dailyIncRate;
+
+    // Saring aturan kadar OT khusus bagi cawangan dan pangkat
+    let locOtConfig = (sObj.otCustomRates && sObj.otCustomRates[loc]) ? sObj.otCustomRates[loc] : null;
+    let rankName = String(m.pangkat || 'AHLI').toUpperCase().trim();
+    let effectiveOtRate = sObj.otRate; // Lalai RM8.00/jam
+
+    if (locOtConfig) {
+      if (locOtConfig.type === 'rank' && locOtConfig.ranks) {
+        effectiveOtRate = parseFloat(locOtConfig.ranks[rankName] || locOtConfig.flatRate || sObj.otRate);
+      } else if (locOtConfig.type === 'flat' && locOtConfig.flatRate) {
+        effectiveOtRate = parseFloat(locOtConfig.flatRate);
+      }
+    }
+    // Peraturan Khas Sektor MARITIM / Pasukan: Penyelia OT sentiasa dikira RM 8.00 / jam
+    if (rankName === 'PENYELIA') {
+      if (!locOtConfig || locOtConfig.type === 'flat' || !locOtConfig.ranks || !locOtConfig.ranks['PENYELIA']) {
+        effectiveOtRate = 8.00;
+      }
+    }
 
     for (let d = 1; d <= max; d++) {
       const k = `${loc}-${mId}-${state.year}-${state.month}-${d}`;
@@ -86,25 +122,34 @@
           if (sObj.otActive && isOtEnabledForLoc && dailyHrs > sObj.otMaxHrs) {
             const normalHrs = sObj.otMaxHrs;
             const otHrs = dailyHrs - sObj.otMaxHrs;
-            totalAllowance += (normalHrs * (parseFloat(m.kadar) || 0)) + (otHrs * sObj.otRate);
+            totalAllowance += (normalHrs * (parseFloat(m.kadar) || 0)) + (otHrs * effectiveOtRate);
           } else {
             totalAllowance += dailyHrs * (parseFloat(m.kadar) || 0);
           }
 
-          // Tambah Insentif Kolaborasi PGA jika berkelayakan
+          // Tambah Insentif Kolaborasi PGA jika berkelayakan mengikut kadar lokasi spesifik
           if (isNbcEnabled) {
-            totalIncentive += sObj.dailyIncRate;
+            totalIncentive += locIncentiveRate;
           }
         }
       }
     }
 
+    // Kira Elaun/Insentif Tambahan SME:
+    // SYARAT PINTAR: Wajib berstatus SME ('YA') DAN lokasi penugasan mesti tergolong dalam lokasi layak SME
+    const isSme = String(m.sme || '').toUpperCase() === 'YA';
+    const smeRatePerHr = parseFloat(sObj.smeRate !== undefined ? sObj.smeRate : (state.db.settings.sme_rate_per_hr || 1.00));
+    const totalSme = (isSme && isSmeEnabledForLoc) ? Number((hrs * smeRatePerHr).toFixed(2)) : 0;
+
     const result = { 
       hrs: Number(hrs.toFixed(2)), 
       dys: days, 
       allowance: totalAllowance, 
-      incentive: totalIncentive, 
-      total: totalAllowance + totalIncentive 
+      incentive: totalIncentive,
+      smeAmount: totalSme,
+      total: totalAllowance + totalIncentive + totalSme,
+      locIncentiveRate: locIncentiveRate,
+      isSmeLocation: isSmeEnabledForLoc
     };
 
     // Simpan hasil kiraan ke dalam cache render aktif
@@ -137,13 +182,21 @@
                 const rosterVal = state.db.roster[key] || 'KOSONG';
                 // Penanda risiko penipuan: Lapor kehadiran pada hari yang tiada jadual kerja
                 const isFraudRisk = rosterVal === 'OFF' || rosterVal === 'CUTI' || rosterVal === 'X' || rosterVal.includes('KOSONG');
+                
+                // Ekstrak nota terperinci jika ada
+                let noteDetail = '';
+                if (val.includes('|')) {
+                  noteDetail = val.split('|')[1] || '';
+                }
+
                 pendings.push({
                   key: key,
                   nama: mem.nama,
                   day: kDay,
-                  val: val.replace('?', ''),
+                  val: val.split('|')[0].replace('?', ''),
                   rosterVal: rosterVal,
-                  isFraudRisk: isFraudRisk
+                  isFraudRisk: isFraudRisk,
+                  note: noteDetail
                 });
               }
             }
@@ -403,6 +456,9 @@
       calModal: { open: false, mode: 'att', memId: null, memName: '', selDay: null, isBulk: false, selectedDays: [] },
       formModal: { open: false, title: '' },
       kioskState: { kp: '', active: false, timer: null, countdownTimer: null, countdown: 15 },
+      lastActiveTime: Date.now(),
+      sessionCheckInterval: null,
+      sessionWarnShown: false,
       navItems: [
         { id: 'dashboard', label: 'Dashboard', icon: 'fa-chart-pie', adminOnly: false },
         { id: 'attendance', label: 'Kehadiran Harian', icon: 'fa-calendar-check', adminOnly: false },
@@ -414,6 +470,12 @@
 
       init() {
         document.addEventListener('toggle-loading', (e) => this.loading = e.detail);
+
+        // Rekodkan aktiviti pergerakan tetikus / papan kekunci untuk mengelakkan sesi dianggap terbiar
+        const resetActivity = () => { this.lastActiveTime = Date.now(); };
+        window.addEventListener('mousemove', resetActivity, { passive: true });
+        window.addEventListener('keydown', resetActivity, { passive: true });
+        window.addEventListener('click', resetActivity, { passive: true });
 
         // Membaca sesi sedia ada bagi mengekalkan keadaan sistem semasa penyegaran semula tab pelayar
         const savedSession = sessionStorage.getItem('relaSession');
@@ -431,6 +493,105 @@
           } catch (e) {}
         }
         this.syncFromServer(true);
+        this.startSilentLivePolling();
+        this.startSessionInactivityMonitor();
+      },
+
+      // ENJIN PEMANTAUAN SESI DENGAN AMARAN AWAL (2 MINIT SEBELUM TAMAT)
+      startSessionInactivityMonitor() {
+        if (this.sessionCheckInterval) clearInterval(this.sessionCheckInterval);
+        
+        // Semak setiap 15 saat
+        this.sessionCheckInterval = setInterval(() => {
+          if (!this.isAuth) return;
+
+          const idleMs = Date.now() - this.lastActiveTime;
+          const idleLimitMs = 30 * 60 * 1000; // 30 Minit had tidak aktif
+          const warnThresholdMs = 28 * 60 * 1000; // 28 Minit (2 minit sebelum logout)
+
+          if (idleMs >= idleLimitMs) {
+            // Sesi tamat sepenuhnya
+            clearInterval(this.sessionCheckInterval);
+            Swal.close();
+            this.logout();
+            Swal.fire({
+              title: 'Sesi Telah Tamat Tempoh',
+              text: 'Sesi anda telah tamat kerana tiada sebarang aktiviti dikesan selama 30 minit. Sila log masuk semula.',
+              icon: 'warning',
+              confirmButtonText: 'Log Masuk Semula',
+              customClass: { popup: 'rounded-3xl' }
+            });
+            return;
+          }
+
+          if (idleMs >= warnThresholdMs && !this.sessionWarnShown) {
+            this.sessionWarnShown = true;
+            let remainingSec = Math.round((idleLimitMs - idleMs) / 1000);
+
+            let timerInterval;
+            Swal.fire({
+              title: 'Amaran: Sesi Bakal Tamat!',
+              html: `Anda tidak melakukan sebarang aktiviti.<br>Sesi akan ditutup automatik dalam <b><span id="session-countdown">${remainingSec}</span> saat</b>.<br><br>Adakah anda ingin kekal log masuk?`,
+              icon: 'warning',
+              showCancelButton: true,
+              confirmButtonColor: '#10b981',
+              cancelButtonColor: '#94a3b8',
+              confirmButtonText: '<i class="fas fa-rotate mr-1"></i> Ya, Kekalkan Sesi',
+              cancelButtonText: 'Log Keluar',
+              allowOutsideClick: false,
+              customClass: { popup: 'rounded-3xl' },
+              didOpen: () => {
+                const b = document.getElementById('session-countdown');
+                timerInterval = setInterval(() => {
+                  remainingSec--;
+                  if (b) b.textContent = remainingSec;
+                  if (remainingSec <= 0) {
+                    clearInterval(timerInterval);
+                  }
+                }, 1000);
+              },
+              willClose: () => {
+                clearInterval(timerInterval);
+              }
+            }).then((result) => {
+              if (result.isConfirmed) {
+                this.extendSession();
+              } else if (result.dismiss === Swal.DismissReason.cancel) {
+                this.logout();
+              }
+            });
+          }
+        }, 15000);
+      },
+
+      // Menyambung semula sesi pengguna ke Google Apps Script
+      extendSession() {
+        this.lastActiveTime = Date.now();
+        this.sessionWarnShown = false;
+        const token = sessionStorage.getItem('relaToken');
+        if (typeof google !== 'undefined' && google.script && token) {
+          google.script.run
+            .withSuccessHandler((res) => {
+              if (res && res.success) {
+                alertMsg('Sesi anda telah dilanjutkan!', 'success');
+              }
+            })
+            .extendUserSession(token);
+        } else {
+          alertMsg('Sesi dilanjutkan (Mod Demo)', 'success');
+        }
+      },
+
+      // ENJIN POLING SENYAP PINTAR (REAL-TIME BACKGROUND SYNC MERENTASI PERANTI)
+      startSilentLivePolling() {
+        if (window._relaLiveSyncInterval) clearInterval(window._relaLiveSyncInterval);
+        // Setiap 20 saat, sistem memeriksa kemas kini dari pelayan secara senyap
+        window._relaLiveSyncInterval = setInterval(() => {
+          // Hanya jalankan jika pengguna sudah log masuk dan tiada modal input yang sedang dibuka
+          if (this.isAuth && !this.calModal.open && !this.formModal.open) {
+            this.syncFromServer(false, true); // true = senyap sepenuhnya tanpa pemutar skrin loading
+          }
+        }, 20000);
       },
 
       getYears() { 
@@ -775,7 +936,8 @@
           this.kioskState.kp = user.kp;
           this.kioskState.active = true;
           this.generateLiveQR();
-          this.kioskState.timer = setInterval(() => this.generateLiveQR(), 15000);
+          // Selaras janaan semula setiap 25 saat (selari dengan had selamat pelayan 45 saat)
+          this.kioskState.timer = setInterval(() => this.generateLiveQR(), 25000);
         });
       },
 
@@ -793,7 +955,7 @@
           correctLevel: QRCode.CorrectLevel.M
         });
 
-        this.kioskState.countdown = 15;
+        this.kioskState.countdown = 25;
         clearInterval(this.kioskState.countdownTimer);
         this.kioskState.countdownTimer = setInterval(() => {
           if (this.kioskState.countdown > 0) this.kioskState.countdown--;
@@ -806,6 +968,27 @@
         clearInterval(this.kioskState.timer);
         clearInterval(this.kioskState.countdownTimer);
         this.loginMode = 'main';
+      },
+
+      // FUNGSI PINTAR: Dapatkan Koordinat GPS Telefon Secara Selamat & Pantas
+      _captureClientCoords(callback) {
+        if (!navigator.geolocation) {
+          return callback(null); // Terus teruskan tanpa menyekat jika pelayar tidak sokong
+        }
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            callback({
+              lat: pos.coords.latitude,
+              lng: pos.coords.longitude,
+              accuracy: pos.coords.accuracy
+            });
+          },
+          (err) => {
+            console.warn("GPS gagal atau dinafikan:", err.message);
+            callback(null); // Tetap teruskan (fallback) agar tidak menyusahkan petugas
+          },
+          { enableHighAccuracy: true, timeout: 5000, maximumAge: 30000 }
+        );
       },
 
       openPublicScanner() {
@@ -827,7 +1010,7 @@
         this.asyncValidateKioskUser((user) => {
           Swal.fire({
             title: 'Lapor Diri Kendiri?',
-            text: 'Sila hantar jika Penyelia tiada di lapangan. Rekod anda memerlukan pengesahan lanjut.',
+            text: 'Sila hantar jika Penyelia tiada di lapangan. Lokasi GPS anda akan disemak secara pintar.',
             icon: 'warning',
             showCancelButton: true,
             confirmButtonColor: '#f59e0b',
@@ -837,7 +1020,9 @@
             customClass: { popup: 'rounded-3xl' }
           }).then((result) => {
             if (result.isConfirmed) {
-              this._postKioskAction('checkout_only', 'Kehadiran Direkod', user.kp);
+              this._captureClientCoords((coords) => {
+                this._postKioskAction('checkout_only', 'Kehadiran Direkod', user.kp, coords);
+              });
             }
           });
         });
@@ -847,7 +1032,7 @@
         this.asyncValidateKioskUser((user) => {
           Swal.fire({
             title: 'Mula Syif (Pos Kosong)?',
-            text: 'Lapor mula bertugas sekiranya tiada rakan pengganti sebelum ini.',
+            text: 'Lapor mula bertugas sekiranya tiada rakan pengganti sebelum ini. Lokasi GPS anda akan disemak secara pintar.',
             icon: 'warning',
             showCancelButton: true,
             confirmButtonColor: '#3b82f6',
@@ -857,24 +1042,26 @@
             customClass: { popup: 'rounded-3xl' }
           }).then((result) => {
             if (result.isConfirmed) {
-              this._postKioskAction('clockin_only', 'Syif Bermula', user.kp);
+              this._captureClientCoords((coords) => {
+                this._postKioskAction('clockin_only', 'Syif Bermula', user.kp, coords);
+              });
             }
           });
         });
       },
 
-      _postKioskAction(actionType, successTitle, kp) {
+      _postKioskAction(actionType, successTitle, kp, coords = null) {
         showLoading(true);
         if (typeof google !== 'undefined' && google.script) {
-          const payload = { token: 'KIOSK_MODE', locId: 'AUTO', scannerId: kp, scannedData: '', action: actionType };
+          const payload = { token: 'KIOSK_MODE', locId: 'AUTO', scannerId: kp, scannedData: '', action: actionType, coords: coords };
           fetch(WEB_APP_URL, { method: 'POST', body: JSON.stringify(payload) }).then(res => res.json()).then(data => {
             showLoading(false);
             if (data.success) {
-              Swal.fire({ icon: 'success', title: successTitle, text: data.msg, customClass: { popup: 'rounded-3xl' } });
+              Swal.fire({ icon: 'success', title: successTitle, html: data.msg, customClass: { popup: 'rounded-3xl' } });
               this.loginMode = 'main';
               this.kioskState.kp = '';
             } else {
-              alertMsg(data.msg, 'error');
+              Swal.fire({ icon: 'error', title: 'Perhatian', html: data.msg, customClass: { popup: 'rounded-3xl' } });
             }
           }).catch(err => {
             showLoading(false);
