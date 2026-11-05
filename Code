@@ -1,7 +1,8 @@
 /**
  * SISTEM PENGURUSAN TUNTUTAN ELAUN RELA - BATU PAHAT
  * Fail: Code.gs (Gerbang Utama API Backend & Penghala Laluan)
- * * Bertindak sebagai entry-point tunggal bagi aplikasi web Google Apps Script.
+ * 
+ * Bertindak sebagai entry-point tunggal bagi aplikasi web Google Apps Script.
  * Mengelola pemuatan template HTML utama, suntikan fail modular, dan penerimaan log imbasan QR.
  */
 
@@ -11,7 +12,6 @@ function doGet(e) {
   template.webAppUrl = ScriptApp.getService().getUrl();
   template.scannerUrl = getSettingValue_('github_scanner_url');
   template.previewUrl = getSettingValue_('github_preview_url');
-  
   return template.evaluate()
     .setTitle('RELA - BATU PAHAT')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1')
