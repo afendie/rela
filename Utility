@@ -52,16 +52,18 @@ function setup() {
           ['ot_enabled_locations', 'L1778964557876'],
           ['nbc_incentive_rate', '30.00'],
           ['nbc_enabled_locations', 'L1778776399751,L1779224068053,L1779224106777,L1779224134764,L1779224161507'],
+          ['sme_rate_per_hr', '1.00'],
+          ['sme_enabled_locations', ''],
           ['github_scanner_url', 'https://afendie.github.io/pembaca-qr/'],
           ['github_preview_url', 'https://afendie.github.io/preview/'],
           ['allow_supervisor_member_crud', 'false'], // Lalai: Sekat akses Penyelia daripada CRUD ahli demi integriti
           
           // Parameter laporan dinamik lalai
-          ['title_b_standard', 'RUMUSAN DAFTAR KEDATANGAN ANGGOTA RELA YANG BERTUGAS DI {loc}'],
-          ['title_b_nbc', 'RUMUSAN PENGESAHAN PENUGASAN DAN PEMBAYARAN ELAUN SERTA INSENTIF PENUGASAN KOLABORASI RELA - PGA BAGI KAWALAN SEMPADAN NEGARA'],
+          ['title_b_standard', 'RUMUSAN TUNTUTAN PEMBAYARAN PTJ RELA - {lokasi}'],
+          ['title_b_nbc', 'RUMUSAN PENGESAHAN PENUGASAN DAN PEMBAYARAN ELAUN SERTA INSENTIF KOLABORASI RELA - PGA'],
           ['title_bank_standard', 'RUMUSAN KENYATAAN MAKLUMAT AKAUN BANK ANGGOTA RELA YANG BERTUGAS'],
           ['title_bank_nbc', 'RUMUSAN KENYATAAN MAKLUMAT TUNTUTAN ELAUN SERTA INSENTIF ANGGOTA DALAM PENUGASAN KOLABORASI RELA - PGA BAGI KAWALAN SEMPADAN NEGARA'],
-          ['title_pengakuan_standard', 'PENGAKUAN TUNTUTAN ELAUN ANGGOTA RELA BAGI PENUGASAN DI PEJABAT {loc}'],
+          ['title_pengakuan_standard', 'PENGAKUAN TUNTUTAN ELAUN ANGGOTA RELA BAGI PENUGASAN DI {lokasi}'],
           ['title_pengakuan_nbc', 'PENGAKUAN TUNTUTAN ELAUN SERTA INSENTIF ANGGOTA DALAM PENUGASAN KOLABORASI RELA - PGA BAGI KAWALAN SEMPADAN NEGARA']
         ];
         defaults.forEach(d => sheet.appendRow(d));
