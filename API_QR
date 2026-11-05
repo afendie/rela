@@ -1,0 +1,290 @@
+/**
+ * SISTEM PENGURUSAN TUNTUTAN ELAUN RELA - BATU PAHAT
+ * Fail: API_QR.gs (Enjin Imbasan QR & Kecerdasan Syif)
+ * 
+ * Mengelola pemprosesan pengimbasan QR, enjin jendela toleransi hadir lewat/awal,
+ * saringan syif lintas hari (cross-day shift), dan verifikasi kelayakan kiosk harian.
+ */
+
+// ======================================================================
+// FUNGSI PEMBANTU: PENGESAHAN JADUAL ROSTER SEMASA
+// ======================================================================
+function isScheduledToday_(db, m, klTime) {
+  const year = klTime.getFullYear();
+  const month = klTime.getMonth() + 1;
+  const day = klTime.getDate();
+
+  // Dapatkan tarikh semalam untuk menangani kes syif malam rentas hari (Cross-Day Shift)
+  let yesterday = new Date(klTime); 
+  yesterday.setDate(klTime.getDate() - 1);
+  
+  const todayKey = `${m.locId}-${m.id}-${year}-${month}-${day}`;
+  const yesterdayKey = `${m.locId}-${m.id}-${yesterday.getFullYear()}-${yesterday.getMonth()+1}-${yesterday.getDate()}`;
+
+  let shiftAssigned = db.roster[todayKey];
+  
+  // Sokongan Syif Malam Rentas Hari: Semak jika semalam ada syif malam yang bermula
+  if (!shiftAssigned || shiftAssigned === 'OFF' || shiftAssigned === 'CUTI' || shiftAssigned === 'X') {
+    shiftAssigned = db.roster[yesterdayKey];
+    if (shiftAssigned === 'MALAM') {
+      shiftAssigned = 'MALAM'; // Izinkan akses keluar (clock-out)
+    }
+  }
+
+  if (!shiftAssigned || shiftAssigned === 'OFF' || shiftAssigned === 'CUTI' || shiftAssigned === 'X') {
+    return false;
+  }
+  return true;
+}
+
+// ======================================================================
+// ENJIN PEMBUNDARAN PINTAR DENGAN DETEKSI LUPA CLOCK-OUT (AUTO-CAP)
+// ======================================================================
+function getSmartRoundedHours_(rawHours, defaultFormat) {
+  defaultFormat = parseFloat(defaultFormat || 8);
+  if (isNaN(defaultFormat) || defaultFormat <= 0) defaultFormat = 8;
+
+  // DETEKSI LUPA CLOCK-OUT: Jika jam bertugas melebihi had munasabah (defaultFormat + 3 jam atau > 14 jam)
+  const maxAllowable = Math.max(defaultFormat + 3.0, 14.0);
+  if (rawHours > maxAllowable) {
+    return {
+      hours: defaultFormat,
+      note: "SISTEM: AUTO-HAD " + defaultFormat + " JAM (LUPA CLOCK-OUT?)",
+      isForcedCap: true
+    };
+  }
+
+  // Saringan Jendela Syif Pintar Dinamik mengikut defaultFormat cawangan
+  // Contoh: jika cawangan 6 jam, toleransi antara 5.3 hingga 7.2 jam -> terus snap ke 6 jam
+  const lowerSnap = defaultFormat - 0.7;
+  const upperSnap = defaultFormat + 1.2;
+
+  if (rawHours >= lowerSnap && rawHours <= upperSnap) {
+    return { 
+      hours: defaultFormat, 
+      note: "SYIF STANDARD " + defaultFormat + " JAM (AUTO-SNAP PINTAR)",
+      isForcedCap: false
+    };
+  }
+
+  // Snap sekunder bagi syif standard 8 jam jika defaultFormat berbeza
+  if (defaultFormat !== 8 && rawHours >= 7.3 && rawHours <= 9.2) {
+    return { hours: 8, note: "SYIF STANDARD 8 JAM (AUTO-SNAP PINTAR)", isForcedCap: false };
+  }
+
+  // Snap sekunder bagi syif deployment 12 jam jika defaultFormat berbeza
+  if (defaultFormat !== 12 && rawHours >= 11.0 && rawHours <= 13.5) {
+    return { hours: 12, note: "SYIF DEPLOYMENT 12 JAM (AUTO-SNAP PINTAR)", isForcedCap: false };
+  }
+
+  // Pengendalian Kes Lewat Ekstrem Atau Pulang Terlalu Awal
+  return { 
+    hours: parseFloat(rawHours.toFixed(1)), 
+    note: "AMARAN: REKOD DI LUAR JENDELA SYIF NORMAL",
+    isForcedCap: false
+  };
+}
+
+// ======================================================================
+// PENGESAHAN KELAYAKAN KIOSK (GATEKEEPER SEBELUM JANAAN QR)
+// ======================================================================
+function checkKioskEligibility(kpRaw) {
+  const db = getAppData(); 
+  const cleanKp = String(kpRaw).trim().replace(/'/g, '');
+
+  // Saring senarai profil anggota menggunakan No Kad Pengenalan
+  const matchingMembers = db.members.filter(x => x.id === cleanKp || String(x.kp).replace(/'/g, '') === cleanKp);
+  if(matchingMembers.length === 0) {
+    return { success: false, msg: "Ralat: No. Kad Pengenalan tidak wujud dalam sistem. Sila hubungi Pentadbir." };
+  }
+
+  // Sentiasa gunakan Zon Waktu Standard Kuala Lumpur (Johor) secara tegar
+  const klTimeStr = new Date().toLocaleString("en-US", {timeZone: "Asia/Kuala_Lumpur"});
+  const klTime = new Date(klTimeStr);
+
+  // Cari profil penugasan cawangan mana yang mempunyai jadual aktif hari ini
+  let m = matchingMembers.find(member => isScheduledToday_(db, member, klTime));
+  if (!m) {
+    m = matchingMembers[0];
+    return { success: false, msg: `Maaf <b>${m.nama}</b>,<br>Sistem mendapati anda <b>TIDAK DIJADUALKAN BERTUGAS</b> di mana-mana cawangan hari ini. Akses modul operasi disekat.` };
+  }
+  
+  return { success: true, name: m.nama, kp: cleanKp };
+}
+
+// ======================================================================
+// ENJIN PROSES IMBASAN QR (REAL-TIME SMART SCANNER ENGINE)
+// ======================================================================
+function processQRScan(data) {
+  try {
+    const db = getAppData();
+    const nowMs = Date.now();
+    const klTimeStr = new Date().toLocaleString("en-US", {timeZone: "Asia/Kuala_Lumpur"});
+    const klTime = new Date(klTimeStr);
+    
+    const getKey = (dateObj, m) => `${m.locId}-${m.id}-${dateObj.getFullYear()}-${dateObj.getMonth()+1}-${dateObj.getDate()}`;
+
+    // KES 1: Log Masuk Kiosk (Clock-in Sahaja)
+    if (data.action === 'clockin_only') {
+      const cleanKp = String(data.scannerId).trim().replace(/'/g, '');
+      const matchingIn = db.members.filter(x => x.id === cleanKp || String(x.kp).replace(/'/g, '') === cleanKp);
+      if (matchingIn.length === 0) return { success: false, msg: "KP Anggota tidak ditemui." };
+      
+      let mIn = matchingIn.find(x => isScheduledToday_(db, x, klTime));
+      if (!mIn) return { success: false, msg: `Akses disekat! Anda tidak mempunyai jadual bertugas aktif hari ini.` };
+
+      const targetKey = getKey(klTime, mIn);
+      const existingVal = db.attendance[targetKey] || '';
+      if (existingVal.startsWith('IN:')) return { success: false, msg: "Anda sudah pun melapor masuk dan SEDANG BERTUGAS." };
+
+      saveCalendarEntry('att', targetKey, `IN:${nowMs}`);
+      return { success: true, msg: `Lapor Masuk Berjaya! Status anda kini: SEDANG BERTUGAS di cawangan [${mIn.locId}].`, memName: mIn.nama };
+    }
+
+    // KES 2: Log Keluar Kiosk (Clock-out Sahaja)
+    if (data.action === 'checkout_only') {
+      const cleanKp = String(data.scannerId).trim().replace(/'/g, '');
+      const matchingOut = db.members.filter(x => x.id === cleanKp || String(x.kp).replace(/'/g, '') === cleanKp);
+      if (matchingOut.length === 0) return { success: false, msg: "KP Anggota tidak ditemui." };
+
+      let mOut = null;
+      let targetKeyOut = "";
+      let valOut = "";
+
+      // Saring jejak sesi aktif 'IN:' termasuk log silang hari (Cross-Day Shift)
+      for (let currentProfile of matchingOut) {
+        let checkKey = getKey(klTime, currentProfile);
+        let checkVal = db.attendance[checkKey] || '';
+        
+        if (checkVal.startsWith('IN:')) {
+          mOut = currentProfile;
+          targetKeyOut = checkKey;
+          valOut = checkVal;
+          break;
+        }
+        
+        let yesterday = new Date(klTime); yesterday.setDate(klTime.getDate() - 1);
+        let checkKeyYest = getKey(yesterday, currentProfile);
+        let checkValYest = db.attendance[checkKeyYest] || '';
+        if (checkValYest.startsWith('IN:')) {
+          mOut = currentProfile;
+          targetKeyOut = checkKeyYest;
+          valOut = checkValYest;
+          break;
+        }
+      }
+
+      if (!mOut) {
+        mOut = matchingOut.find(x => isScheduledToday_(db, x, klTime));
+        if (!mOut) mOut = matchingOut[0];
+        targetKeyOut = getKey(klTime, mOut);
+        valOut = db.attendance[targetKeyOut] || '';
+      }
+
+      if (!valOut.startsWith('IN:') && !isScheduledToday_(db, mOut, klTime)) {
+        return { success: false, msg: `Akses ditolak! Tiada sesi tugas aktif dan tiada jadual ditemui hari ini.` };
+      }
+
+      let calculated = { hours: 0, note: "REKOD MANUAL PENYELIA" };
+      const locObj = db.locations.find(l => l.id === mOut.locId) || {};
+      const defaultFormat = parseFloat(locObj.format || 8);
+
+      if (valOut.startsWith('IN:')) {
+        const inMs = parseInt(valOut.replace('IN:', ''), 10);
+        const diffHours = (nowMs - inMs) / 3600000;
+        calculated = getSmartRoundedHours_(diffHours, defaultFormat);
+      } else {
+        return { success: false, msg: "RALAT: Tiada rekod Lapor Masuk (IN) ditemui. Sila hubungi Penyelia." };
+      }
+
+      // Jika sistem mengaktifkan auto-cap (lupa clock-out) atau rekod luar jendela,
+      // paksa tanda tanya "?" supaya Penyelia memberikan pengesahan di Dashboard.
+      let isCleanSnap = (calculated.hours === defaultFormat || calculated.hours === 8 || calculated.hours === 12) && !calculated.isForcedCap;
+      let finalPayload = isCleanSnap
+        ? `${calculated.hours}|${calculated.note}`
+        : `${calculated.hours}?|${calculated.note}`;
+
+      saveCalendarEntry('att', targetKeyOut, finalPayload);
+      return { 
+        success: true, 
+        msg: `Tamat Tugas cawangan [${mOut.locId}] (${calculated.hours} Jam) direkodkan.${isCleanSnap ? '' : ' Menunggu Pengesahan Penyelia.'}`, 
+        memName: mOut.nama 
+      };
+    }
+
+    // KES 3: Log Scan QR Pas Pasukan (Serah Tugas Syif - Handshake Protocol)
+    const parts = String(data.scannedData).trim().split('|');
+    if (parts.length < 2) return { success: false, msg: "Kod QR tidak sah." };
+
+    const kpRaw = parts[0].replace(/'/g, '');
+    const qrTimestamp = parseInt(parts[1], 10);
+    if (isNaN(qrTimestamp) || (nowMs - qrTimestamp) > 30000) {
+      return { success: false, msg: "Kod QR telah luput (Maksimum 30 saat untuk keselamatan)." };
+    }
+
+    const matchingOut = db.members.filter(x => x.id === kpRaw || String(x.kp).replace(/'/g, '') === kpRaw);
+    if(matchingOut.length === 0) return { success: false, msg: "Rekod anggota KELUAR tidak ditemui." };
+
+    let mOut = matchingOut.find(x => {
+      let tk = getKey(klTime, x);
+      if ((db.attendance[tk] || '').startsWith('IN:')) return true;
+      let yest = new Date(klTime); yest.setDate(klTime.getDate() - 1);
+      if ((db.attendance[getKey(yest, x)] || '').startsWith('IN:')) return true;
+      return false;
+    }) || matchingOut.find(x => isScheduledToday_(db, x, klTime)) || matchingOut[0];
+
+    const scannerKpClean = String(data.scannerId).trim().replace(/'/g, '');
+    const matchingIn = db.members.filter(x => x.id === scannerKpClean || String(x.kp).replace(/'/g, '') === scannerKpClean);
+    if (data.token === 'KIOSK_MODE' && matchingIn.length === 0) {
+      return { success: false, msg: "ID Rakan Pengganti (Tukang Imbas) tidak dijumpai." };
+    }
+
+    let mIn = matchingIn.find(x => x.locId === mOut.locId && isScheduledToday_(db, x, klTime)) || matchingIn.find(x => isScheduledToday_(db, x, klTime)) || matchingIn[0];
+    if (mIn && !isScheduledToday_(db, mIn, klTime)) {
+      return { success: false, msg: `Akses ditolak! Rakan pengganti (${mIn.nama}) tidak dijadualkan bertugas hari ini.` };
+    }
+
+    let targetKeyOut = getKey(klTime, mOut);
+    let valOut = db.attendance[targetKeyOut] || '';
+    if (!valOut.startsWith('IN:')) {
+      let yesterday = new Date(klTime); yesterday.setDate(klTime.getDate() - 1);
+      const yesterdayKey = getKey(yesterday, mOut);
+      if ((db.attendance[yesterdayKey] || '').startsWith('IN:')) { 
+        targetKeyOut = yesterdayKey; 
+        valOut = db.attendance[yesterdayKey]; 
+      }
+    }
+
+    const locObj = db.locations.find(l => l.id === mOut.locId) || {};
+    const defaultFormat = parseFloat(locObj.format || 8);
+    let calculated = { hours: defaultFormat, note: "SERAH TUGAS OPERASI (HANDSHAKE)" };
+
+    if (valOut.startsWith('IN:')) {
+      const inMs = parseInt(valOut.replace('IN:', ''), 10);
+      const diffHours = (nowMs - inMs) / 3600000;
+      calculated = getSmartRoundedHours_(diffHours, defaultFormat);
+    } else {
+      calculated.hours = defaultFormat;
+    }
+
+    // Jika auto-cap dipicu saat handshake serah tugas, simpan dengan status pending "?"
+    let isCleanHandshake = (calculated.hours === defaultFormat || calculated.hours === 8 || calculated.hours === 12) && !calculated.isForcedCap;
+    let finalPayload = isCleanHandshake
+      ? `${calculated.hours}|${calculated.note}`
+      : `${calculated.hours}?|${calculated.note}`;
+
+    saveCalendarEntry('att', targetKeyOut, finalPayload);
+
+    if (mIn) {
+      const targetKeyIn = getKey(klTime, mIn);
+      saveCalendarEntry('att', targetKeyIn, `IN:${nowMs}`);
+    }
+
+    let finalMsg = `Serah tugas [${mOut.locId}] selesai. Kehadiran ${mOut.nama} disahkan (${calculated.hours} Jam).`;
+    if (mIn) finalMsg += `\n> ${mIn.nama} mula bertugas (Lapor Masuk).`;
+
+    return { success: true, msg: finalMsg, memName: mOut.nama };
+  } catch (err) {
+    return { success: false, msg: "Ralat pemprosesan QR: " + err.message };
+  }
+}
