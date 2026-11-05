@@ -355,7 +355,7 @@ function saveMembersBulkSecure(token, membersArray) {
 }
 
 // ======================================================================
-// 7. URUS CAWANGAN (LOKASI) - HAK EKSKLUSIF ADMIN
+// 7. URUS CAWANGAN (LOCATIONS) - HAK EKSKLUSIF ADMIN
 // ======================================================================
 function saveLocationSecure(token, l) {
   try {
