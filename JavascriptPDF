@@ -632,7 +632,7 @@
           
           doc.setFont('helvetica', 'normal').text('Dengan ini disahkan bahawa anggota seperti senarai nama di atas telah bertugas pada tarikh and waktu', 53, nextY + 45);
           
-          const phrase = 'sepertimana yang dinyatakan and tuntutan mereka adalah benar yang ';
+          const phrase = 'sepertimana yang dinyatakan and tuntutan mereka adalah benar yang berjumlah: ';
           doc.text(phrase, 53, nextY + 52);
           
           const phraseWidth = doc.getTextWidth(phrase);
@@ -1029,6 +1029,12 @@
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, "Rumusan PTJ RELA");
 
+        // Format lebar lajur (Column Widths) kemas untuk Excel Lampiran B
+        let colWidths = [{ wch: 6 }, { wch: 38 }];
+        for (let d = 1; d <= maxD; d++) colWidths.push({ wch: 5 });
+        colWidths.push({ wch: 10 }, { wch: 10 }, { wch: 14 }, { wch: 16 }, { wch: 16 }, { wch: 15 }, { wch: 18 });
+        ws['!cols'] = colWidths;
+
         const filename = `Rumusan_Tuntutan_PTJ_${locNameDisplay.replace(/[^A-Z0-9]/gi, '_')}_${M_SHORT[st.month-1]}_${st.year}.xlsx`;
         XLSX.writeFile(wb, filename);
 
@@ -1042,7 +1048,7 @@
     }, 50);
   }
 
-  // 2. Rumusan Bank Excel
+  // 2. Rumusan Bank Excel (Format Kemas Setaraf PDF)
   function generateRumusanBankExcel(st) {
     showLoading(true);
     setTimeout(() => {
@@ -1062,9 +1068,27 @@
         const anyNbc = reportLocIds.some(id => enabledNbcLocs.includes(id));
         const anySme = reportLocIds.some(id => enabledSmeLocs.includes(id));
 
+        let locNameDisplay = reportLocIds.length === 1 
+          ? (st.db.locations.find(l => l.id === reportLocIds[0])?.name || "LOKASI").toUpperCase() 
+          : `KUMULATIF LOKASI`;
+
+        const maxD = new Date(st.year, st.month, 0).getDate();
+        const reportTitleDate = `01 HINGGA ${maxD} ${M_SHORT[st.month-1].toUpperCase()} ${st.year}`;
+
+        let rawTitleText = anyNbc 
+          ? (st.db.settings.title_bank_nbc || "RUMUSAN KENYATAAN MAKLUMAT TUNTUTAN ELAUN SERTA INSENTIF ANGGOTA DALAM PENUGASAN KOLABORASI RELA - PGA BAGI KAWALAN SEMPADAN NEGARA") 
+          : (st.db.settings.title_bank_standard || "RUMUSAN KENYATAAN MAKLUMAT AKAUN BANK ANGGOTA RELA YANG BERTUGAS");
+        
+        let titleText = window.resolveDynamicTitleJS 
+          ? window.resolveDynamicTitleJS(rawTitleText, locNameDisplay, st)
+          : rawTitleText.replace(/{lokasi}|{loc}/gi, locNameDisplay);
+
         let aoa = [];
-        aoa.push(['RUMUSAN KENYATAAN MAKLUMAT AKAUN BANK ANGGOTA RELA']);
-        aoa.push([`BAGI BULAN: ${M_NAMES[st.month-1].toUpperCase()} ${st.year}`]);
+        aoa.push([titleText.toUpperCase()]);
+        aoa.push([`BAGI BULAN : ${reportTitleDate}`]);
+        aoa.push([]);
+        aoa.push(['TEMPAT PENUGASAN', ':', locNameDisplay]);
+        aoa.push(['DAERAH', ':', (st.db.settings.report_daerah || 'RELA DAERAH BATU PAHAT').toUpperCase()]);
         aoa.push([]);
 
         let header = ['BIL', 'NO AKAUN BANK', 'NAMA PEMEGANG AKAUN', 'JUMLAH ELAUN (RM)'];
@@ -1103,10 +1127,46 @@
         let totalRow = ['JUMLAH', '', '', formatRM(grandElaun)];
         if (anyNbc) totalRow.push(formatRM(grandInc));
         if (anySme) totalRow.push(formatRM(grandSme));
-        totalRow.push(`TOTAL BERSIH: RM${formatRM(grandTotalAll)}`, '', '');
+        totalRow.push(`TOTAL BERSIH: RM${formatRM(grandTotalAll)}`);
+        totalRow.push('');
+        totalRow.push('');
         aoa.push(totalRow);
 
+        aoa.push([]);
+        aoa.push(['*Sila sertakan salinan muka surat hadapan akaun bank anggota bagi pengesahan manual.']);
+        aoa.push([]);
+        aoa.push(['DISEDIAKAN OLEH :', '', '', 'DISEMAK OLEH :', '', '', 'DISAHKAN OLEH :']);
+        aoa.push([]);
+        aoa.push(['TANDATANGAN: ____________________', '', '', 'TANDATANGAN: ____________________', '', '', 'TANDATANGAN: ____________________']);
+        aoa.push([`COP (${st.db.settings.report_disediakan || 'PEMBANTU TADBIR'})`, '', '', `COP (${st.db.settings.report_disemak || 'PEGAWAI RELA DAERAH'})`, '', '', `COP (${st.db.settings.report_disahkan || 'PENGARAH RELA NEGERI'})`]);
+        aoa.push(['TARIKH : ____/____/________', '', '', 'TARIKH : ____/____/________', '', '', 'TARIKH : ____/____/________']);
+
         const ws = XLSX.utils.aoa_to_sheet(aoa);
+
+        const totalCols = header.length - 1;
+        const rDataEnd = 6 + activeMems.length;
+        ws['!merges'] = [
+          { s: { r: 0, c: 0 }, e: { r: 0, c: totalCols } },
+          { s: { r: 1, c: 0 }, e: { r: 1, c: totalCols } },
+          { s: { r: 3, c: 2 }, e: { r: 3, c: 5 } },
+          { s: { r: 4, c: 2 }, e: { r: 4, c: 5 } },
+          { s: { r: rDataEnd, c: 0 }, e: { r: rDataEnd, c: 2 } },
+          { s: { r: rDataEnd + 4, c: 0 }, e: { r: rDataEnd + 4, c: 2 } },
+          { s: { r: rDataEnd + 4, c: 3 }, e: { r: rDataEnd + 4, c: 5 } },
+          { s: { r: rDataEnd + 4, c: 6 }, e: { r: rDataEnd + 4, c: totalCols } }
+        ];
+
+        let colsWidthArr = [
+          { wch: 6 },
+          { wch: 22 },
+          { wch: 42 },
+          { wch: 20 }
+        ];
+        if (anyNbc) colsWidthArr.push({ wch: 22 });
+        if (anySme) colsWidthArr.push({ wch: 20 });
+        colsWidthArr.push({ wch: 20 }, { wch: 24 }, { wch: 18 });
+        ws['!cols'] = colsWidthArr;
+
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, "Rumusan Bank");
 
@@ -1124,7 +1184,7 @@
     }, 50);
   }
 
-  // 3. Pengakuan Tuntutan Excel
+  // 3. Pengakuan Tuntutan Excel (Format Kemas Setaraf PDF)
   function generatePengakuanExcel(st) {
     showLoading(true);
     setTimeout(() => {
@@ -1171,15 +1231,27 @@
         let tA = 0;
         activeMems.forEach(m => tA += calcMemberStats(m.id, st).total);
 
+        const maxD = new Date(st.year, st.month, 0).getDate();
+        const reportTitleDate = `01 HINGGA ${maxD} ${M_SHORT[st.month-1].toUpperCase()} ${st.year}`;
+
+        const isNbcOperation = targetLocIds.some(id => nbcConfigIds.includes(id) || isPgaLocation(st.db.locations.find(l => l.id === id)));
+        let rawTitleText = isNbcOperation 
+          ? (st.db.settings.title_pengakuan_nbc || "PENGAKUAN TUNTUTAN ELAUN SERTA INSENTIF ANGGOTA DALAM PENUGASAN KOLABORASI RELA - PGA BAGI KAWALAN SEMPADAN NEGARA") 
+          : (st.db.settings.title_pengakuan_standard || "PENGAKUAN TUNTUTAN ELAUN ANGGOTA RELA BAGI PENUGASAN DI {lokasi}");
+
+        let titleText = window.resolveDynamicTitleJS 
+          ? window.resolveDynamicTitleJS(rawTitleText, locTitleDisplay, st)
+          : rawTitleText.replace(/{lokasi}|{loc}/gi, locTitleDisplay);
+
         let aoa = [];
-        aoa.push(['PENGAKUAN TUNTUTAN ELAUN ANGGOTA RELA']);
-        aoa.push([`PENUGASAN: ${locTitleDisplay.toUpperCase()}`]);
-        aoa.push([`JABATAN: SUKARELAWAN MALAYSIA (RELA)`]);
-        aoa.push([`NEGERI: JOHOR`]);
-        aoa.push([`DAERAH: ${(st.db.settings.report_daerah || 'RELA DAERAH BATU PAHAT').toUpperCase()}`]);
-        aoa.push([`BULAN: ${M_NAMES[st.month-1].toUpperCase()} ${st.year}`]);
+        aoa.push([titleText.toUpperCase()]);
         aoa.push([]);
-        aoa.push(['Dengan ini disahkan bahawa anggota seperti senarai nama di bawah telah bertugas dan tuntutan mereka adalah benar berjumlah:', `RM ${formatRM(tA)}`]);
+        aoa.push(['JABATAN', ':', 'SUKARELAWAN MALAYSIA (RELA)']);
+        aoa.push(['NEGERI', ':', 'JOHOR']);
+        aoa.push(['DAERAH', ':', (st.db.settings.report_daerah || 'RELA DAERAH BATU PAHAT').toUpperCase()]);
+        aoa.push(['BULAN', ':', reportTitleDate]);
+        aoa.push([]);
+        aoa.push(['PENGESAHAN :', 'Dengan ini disahkan bahawa anggota seperti senarai nama di bawah telah bertugas pada tarikh dan waktu sepertimana yang dinyatakan dan tuntutan mereka adalah benar yang berjumlah:', '', '', `RM ${formatRM(tA)}`]);
         aoa.push([]);
 
         aoa.push(['BIL', 'NAMA PETUGAS', 'NO. KP', 'PANGKAT', 'JUMLAH TUNTUTAN (RM)']);
@@ -1194,9 +1266,35 @@
           ]);
         });
 
-        aoa.push(['JUMLAH KESELURUHAN', '', '', '', formatRM(tA)]);
+        aoa.push(['JUMLAH KESELURUHAN', '', '', '', `RM ${formatRM(tA)}`]);
+        aoa.push([]);
+        aoa.push(['DISEDIAKAN OLEH :', '', 'DISEMAK OLEH :', '', 'DISAHKAN OLEH :']);
+        aoa.push([]);
+        aoa.push(['TANDATANGAN: ____________________', '', 'TANDATANGAN: ____________________', '', 'TANDATANGAN: ____________________']);
+        aoa.push([`COP (${st.db.settings.report_disediakan || 'PEMBANTU TADBIR'})`, '', `COP (${st.db.settings.report_disemak || 'PEGAWAI RELA DAERAH'})`, '', `COP (${st.db.settings.report_disahkan || 'PENGARAH RELA NEGERI'})`]);
+        aoa.push(['TARIKH : ____/____/________', '', 'TARIKH : ____/____/________', '', 'TARIKH : ____/____/________']);
 
         const ws = XLSX.utils.aoa_to_sheet(aoa);
+
+        const rTotal = 9 + activeMems.length;
+        ws['!merges'] = [
+          { s: { r: 0, c: 0 }, e: { r: 0, c: 4 } },
+          { s: { r: 2, c: 2 }, e: { r: 2, c: 4 } },
+          { s: { r: 3, c: 2 }, e: { r: 3, c: 4 } },
+          { s: { r: 4, c: 2 }, e: { r: 4, c: 4 } },
+          { s: { r: 5, c: 2 }, e: { r: 5, c: 4 } },
+          { s: { r: 7, c: 1 }, e: { r: 7, c: 3 } },
+          { s: { r: rTotal, c: 0 }, e: { r: rTotal, c: 3 } }
+        ];
+
+        ws['!cols'] = [
+          { wch: 6 },
+          { wch: 42 },
+          { wch: 22 },
+          { wch: 18 },
+          { wch: 25 }
+        ];
+
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, "Pengakuan");
 
@@ -1214,7 +1312,7 @@
     }, 50);
   }
 
-  // 4. Jadual Roster Excel
+  // 4. Jadual Roster Excel (Format Kemas Setaraf PDF)
   function generateJadualRosterExcel(st) {
     showLoading(true);
     setTimeout(() => {
@@ -1229,13 +1327,17 @@
         }
 
         const mems = st.db.members.filter(m => reportLocIds.includes(m.locId));
+        let locNameDisplay = reportLocIds.length === 1 
+          ? (st.db.locations.find(l => l.id === reportLocIds[0])?.name || "LOKASI").toUpperCase() 
+          : `KUMULATIF LOKASI`;
 
         let aoa = [];
-        aoa.push(['JADUAL PENUGASAN (ROSTER)']);
-        aoa.push([`BULAN: ${M_NAMES[st.month-1].toUpperCase()} ${st.year}`]);
+        aoa.push(['JADUAL (ROSTER) PENUGASAN ANGGOTA RELA']);
+        aoa.push([`JADUAL PENUGASAN DI ${locNameDisplay}`]);
+        aoa.push([`BAGI BULAN: ${M_NAMES[st.month-1].toUpperCase()} ${st.year}`]);
         aoa.push([]);
 
-        let header = ['BIL', 'NAMA PETUGAS', 'NO KP', 'PANGKAT'];
+        let header = ['BIL', 'NAMA PETUGAS', 'NO. KP', 'PANGKAT'];
         for (let d = 1; d <= maxD; d++) header.push(d.toString());
         aoa.push(header);
 
@@ -1257,7 +1359,28 @@
           aoa.push(row);
         });
 
+        aoa.push([]);
+        aoa.push(['PETUNJUK: P = PAGI | PT = PETANG | M = MALAM | O = OFF / CUTI']);
+        aoa.push([]);
+        aoa.push(['DISEDIAKAN OLEH :', '', '', '', 'DISEMAK OLEH :']);
+        aoa.push([]);
+        aoa.push(['TANDATANGAN: ____________________', '', '', '', 'TANDATANGAN: ____________________']);
+        aoa.push([`(${st.db.settings.report_disediakan || 'PEMBANTU TADBIR'})`, '', '', '', `(${st.db.settings.report_disemak || 'PEGAWAI RELA DAERAH'})`]);
+
         const ws = XLSX.utils.aoa_to_sheet(aoa);
+
+        const totalRosterCols = 3 + maxD;
+        ws['!merges'] = [
+          { s: { r: 0, c: 0 }, e: { r: 0, c: totalRosterCols } },
+          { s: { r: 1, c: 0 }, e: { r: 1, c: totalRosterCols } },
+          { s: { r: 2, c: 0 }, e: { r: 2, c: totalRosterCols } },
+          { s: { r: 5 + mems.length, c: 0 }, e: { r: 5 + mems.length, c: 10 } }
+        ];
+
+        let rCols = [{ wch: 6 }, { wch: 38 }, { wch: 20 }, { wch: 14 }];
+        for (let d = 1; d <= maxD; d++) rCols.push({ wch: 5 });
+        ws['!cols'] = rCols;
+
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, "Jadual Roster");
 
