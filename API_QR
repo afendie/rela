@@ -38,6 +38,72 @@ function isScheduledToday_(db, m, klTime) {
 }
 
 // ======================================================================
+// ENJIN GEOLOKASI PINTAR (HAVERSINE DISTANCE & SMART HYBRID GEOFENCING)
+// ======================================================================
+function calculateDistanceMeters_(lat1, lon1, lat2, lon2) {
+  const R = 6371e3; // Radius bumi dalam meter
+  const φ1 = lat1 * Math.PI / 180;
+  const φ2 = lat2 * Math.PI / 180;
+  const Δφ = (lat2 - lat1) * Math.PI / 180;
+  const Δλ = (lon2 - lon1) * Math.PI / 180;
+
+  const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
+            Math.cos(φ1) * Math.cos(φ2) *
+            Math.sin(Δλ/2) * Math.sin(Δλ/2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  return Math.round(R * c);
+}
+
+function verifySmartGeofence_(locObj, clientCoords) {
+  // Jika cawangan belum ada tetapan koordinat lat/lng, luluskan automatik (Bebas halangan)
+  if (!locObj || !locObj.lat || !locObj.lng || locObj.lat === '' || locObj.lng === '') {
+    return { status: 'BYPASS', isOutside: false, note: '' };
+  }
+
+  // Jika peranti gagal bekalkan GPS (tiada isyarat satelit / peranti kiosk lama)
+  if (!clientCoords || !clientCoords.lat || !clientCoords.lng) {
+    return { 
+      status: 'NO_GPS', 
+      isOutside: true, 
+      note: ' [GPS: ISYARAT PERANTI TIDAK DAPAT DIKESAN]' 
+    };
+  }
+
+  const targetLat = parseFloat(locObj.lat);
+  const targetLng = parseFloat(locObj.lng);
+  const userLat = parseFloat(clientCoords.lat);
+  const userLng = parseFloat(clientCoords.lng);
+  const maxRadius = parseFloat(locObj.radius) || 300; // Had lalai 300 meter
+
+  const distance = calculateDistanceMeters_(targetLat, targetLng, userLat, userLng);
+
+  // KES A: Dalam lingkungan had radius pos (Zon Hijau)
+  if (distance <= maxRadius) {
+    return { status: 'IN_BOUNDS', isOutside: false, distance: distance, note: ` [GPS: SAH DI POS (${distance}m)]` };
+  }
+
+  // KES B: Jarak penipuan melampau (Zon Merah > 5 KM - cth berada di rumah/pekan lain)
+  if (distance > 5000) {
+    const km = (distance / 1000).toFixed(1);
+    return { 
+      status: 'REJECT_EXTREME', 
+      isOutside: true, 
+      distance: distance, 
+      msg: `PENGESAHAN LOKASI GAGAL!<br><br>Sistem mengesan anda berada sejauh <b>${km} KM</b> daripada pos penugasan rasmi [${locObj.name}]. Sila berada di sekitar pos penugasan.` 
+    };
+  }
+
+  // KES C: Zon Kuning (Melebihi had radius tetapi di bawah 5 KM - Toleransi GPS telefon lemah di pos pedalaman)
+  const kmDist = distance >= 1000 ? `${(distance/1000).toFixed(1)}km` : `${distance}m`;
+  return { 
+    status: 'OUT_OF_BOUNDS_TOLERATED', 
+    isOutside: true, 
+    distance: distance, 
+    note: ` [GPS: LUAR RADIUS (${kmDist})?]` 
+  };
+}
+
+// ======================================================================
 // ENJIN PEMBUNDARAN PINTAR DENGAN DETEKSI LUPA CLOCK-OUT (AUTO-CAP)
 // ======================================================================
 function getSmartRoundedHours_(rawHours, defaultFormat) {
@@ -55,7 +121,6 @@ function getSmartRoundedHours_(rawHours, defaultFormat) {
   }
 
   // Saringan Jendela Syif Pintar Dinamik mengikut defaultFormat cawangan
-  // Contoh: jika cawangan 6 jam, toleransi antara 5.3 hingga 7.2 jam -> terus snap ke 6 jam
   const lowerSnap = defaultFormat - 0.7;
   const upperSnap = defaultFormat + 1.2;
 
@@ -121,6 +186,7 @@ function processQRScan(data) {
     const nowMs = Date.now();
     const klTimeStr = new Date().toLocaleString("en-US", {timeZone: "Asia/Kuala_Lumpur"});
     const klTime = new Date(klTimeStr);
+    const coords = data.coords || null; // Ambil koordinat GPS daripada peranti
     
     const getKey = (dateObj, m) => `${m.locId}-${m.id}-${dateObj.getFullYear()}-${dateObj.getMonth()+1}-${dateObj.getDate()}`;
 
@@ -133,12 +199,21 @@ function processQRScan(data) {
       let mIn = matchingIn.find(x => isScheduledToday_(db, x, klTime));
       if (!mIn) return { success: false, msg: `Akses disekat! Anda tidak mempunyai jadual bertugas aktif hari ini.` };
 
+      // Semakan Geofencing Pintar Lokasi
+      const locObj = db.locations.find(l => l.id === mIn.locId) || {};
+      const geoCheck = verifySmartGeofence_(locObj, coords);
+      if (geoCheck.status === 'REJECT_EXTREME') {
+        return { success: false, msg: geoCheck.msg };
+      }
+
       const targetKey = getKey(klTime, mIn);
       const existingVal = db.attendance[targetKey] || '';
       if (existingVal.startsWith('IN:')) return { success: false, msg: "Anda sudah pun melapor masuk dan SEDANG BERTUGAS." };
 
       saveCalendarEntry('att', targetKey, `IN:${nowMs}`);
-      return { success: true, msg: `Lapor Masuk Berjaya! Status anda kini: SEDANG BERTUGAS di cawangan [${mIn.locId}].`, memName: mIn.nama };
+      let successMsg = `Lapor Masuk Berjaya! Status: SEDANG BERTUGAS di cawangan [${mIn.locId}].`;
+      if (geoCheck.note) successMsg += `<br><span class="text-[9px] text-slate-500 font-bold">${geoCheck.note}</span>`;
+      return { success: true, msg: successMsg, memName: mIn.nama };
     }
 
     // KES 2: Log Keluar Kiosk (Clock-out Sahaja)
@@ -151,7 +226,6 @@ function processQRScan(data) {
       let targetKeyOut = "";
       let valOut = "";
 
-      // Saring jejak sesi aktif 'IN:' termasuk log silang hari (Cross-Day Shift)
       for (let currentProfile of matchingOut) {
         let checkKey = getKey(klTime, currentProfile);
         let checkVal = db.attendance[checkKey] || '';
@@ -185,8 +259,13 @@ function processQRScan(data) {
         return { success: false, msg: `Akses ditolak! Tiada sesi tugas aktif dan tiada jadual ditemui hari ini.` };
       }
 
-      let calculated = { hours: 0, note: "REKOD MANUAL PENYELIA" };
       const locObj = db.locations.find(l => l.id === mOut.locId) || {};
+      const geoCheck = verifySmartGeofence_(locObj, coords);
+      if (geoCheck.status === 'REJECT_EXTREME') {
+        return { success: false, msg: geoCheck.msg };
+      }
+
+      let calculated = { hours: 0, note: "REKOD MANUAL PENYELIA" };
       const defaultFormat = parseFloat(locObj.format || 8);
 
       if (valOut.startsWith('IN:')) {
@@ -197,17 +276,18 @@ function processQRScan(data) {
         return { success: false, msg: "RALAT: Tiada rekod Lapor Masuk (IN) ditemui. Sila hubungi Penyelia." };
       }
 
-      // Jika sistem mengaktifkan auto-cap (lupa clock-out) atau rekod luar jendela,
-      // paksa tanda tanya "?" supaya Penyelia memberikan pengesahan di Dashboard.
-      let isCleanSnap = (calculated.hours === defaultFormat || calculated.hours === 8 || calculated.hours === 12) && !calculated.isForcedCap;
-      let finalPayload = isCleanSnap
-        ? `${calculated.hours}|${calculated.note}`
-        : `${calculated.hours}?|${calculated.note}`;
+      // Jika auto-cap ATAU berada di luar had geofence bertoleransi, minta pengesahan penyelia (?)
+      let needsApproval = calculated.isForcedCap || geoCheck.isOutside || (calculated.hours !== defaultFormat && calculated.hours !== 8 && calculated.hours !== 12);
+      let combinedNote = calculated.note + (geoCheck.note || '');
+
+      let finalPayload = needsApproval
+        ? `${calculated.hours}?|${combinedNote}`
+        : `${calculated.hours}|${combinedNote}`;
 
       saveCalendarEntry('att', targetKeyOut, finalPayload);
       return { 
         success: true, 
-        msg: `Tamat Tugas cawangan [${mOut.locId}] (${calculated.hours} Jam) direkodkan.${isCleanSnap ? '' : ' Menunggu Pengesahan Penyelia.'}`, 
+        msg: `Tamat Tugas cawangan [${mOut.locId}] (${calculated.hours} Jam) direkodkan.${needsApproval ? ' Menunggu Pengesahan Penyelia.' : ''}`, 
         memName: mOut.nama 
       };
     }
@@ -218,8 +298,8 @@ function processQRScan(data) {
 
     const kpRaw = parts[0].replace(/'/g, '');
     const qrTimestamp = parseInt(parts[1], 10);
-    if (isNaN(qrTimestamp) || (nowMs - qrTimestamp) > 30000) {
-      return { success: false, msg: "Kod QR telah luput (Maksimum 30 saat untuk keselamatan)." };
+    if (isNaN(qrTimestamp) || (nowMs - qrTimestamp) > 45000) {
+      return { success: false, msg: "Kod QR telah luput (Maksimum 45 saat untuk keselamatan)." };
     }
 
     const matchingOut = db.members.filter(x => x.id === kpRaw || String(x.kp).replace(/'/g, '') === kpRaw);
@@ -239,9 +319,19 @@ function processQRScan(data) {
       return { success: false, msg: "ID Rakan Pengganti (Tukang Imbas) tidak dijumpai." };
     }
 
-    let mIn = matchingIn.find(x => x.locId === mOut.locId && isScheduledToday_(db, x, klTime)) || matchingIn.find(x => isScheduledToday_(db, x, klTime)) || matchingIn[0];
+    let mIn = matchingIn.find(x => x.locId === mOut.locId && isScheduledToday_(db, x, klTime)) || 
+              matchingIn.find(x => isScheduledToday_(db, x, klTime)) || 
+              matchingIn[0];
+
     if (mIn && !isScheduledToday_(db, mIn, klTime)) {
       return { success: false, msg: `Akses ditolak! Rakan pengganti (${mIn.nama}) tidak dijadualkan bertugas hari ini.` };
+    }
+
+    // Semakan Geofence untuk Handshake
+    const locObj = db.locations.find(l => l.id === mOut.locId) || {};
+    const geoCheck = verifySmartGeofence_(locObj, coords);
+    if (geoCheck.status === 'REJECT_EXTREME') {
+      return { success: false, msg: geoCheck.msg };
     }
 
     let targetKeyOut = getKey(klTime, mOut);
@@ -255,7 +345,6 @@ function processQRScan(data) {
       }
     }
 
-    const locObj = db.locations.find(l => l.id === mOut.locId) || {};
     const defaultFormat = parseFloat(locObj.format || 8);
     let calculated = { hours: defaultFormat, note: "SERAH TUGAS OPERASI (HANDSHAKE)" };
 
@@ -267,11 +356,12 @@ function processQRScan(data) {
       calculated.hours = defaultFormat;
     }
 
-    // Jika auto-cap dipicu saat handshake serah tugas, simpan dengan status pending "?"
-    let isCleanHandshake = (calculated.hours === defaultFormat || calculated.hours === 8 || calculated.hours === 12) && !calculated.isForcedCap;
-    let finalPayload = isCleanHandshake
-      ? `${calculated.hours}|${calculated.note}`
-      : `${calculated.hours}?|${calculated.note}`;
+    let needsApproval = calculated.isForcedCap || geoCheck.isOutside || (calculated.hours !== defaultFormat && calculated.hours !== 8 && calculated.hours !== 12);
+    let combinedNote = calculated.note + (geoCheck.note || '');
+
+    let finalPayload = needsApproval
+      ? `${calculated.hours}?|${combinedNote}`
+      : `${calculated.hours}|${combinedNote}`;
 
     saveCalendarEntry('att', targetKeyOut, finalPayload);
 
@@ -282,9 +372,51 @@ function processQRScan(data) {
 
     let finalMsg = `Serah tugas [${mOut.locId}] selesai. Kehadiran ${mOut.nama} disahkan (${calculated.hours} Jam).`;
     if (mIn) finalMsg += `\n> ${mIn.nama} mula bertugas (Lapor Masuk).`;
+    if (geoCheck.note) finalMsg += `<br><span class="text-[9px] text-slate-500 font-bold">${geoCheck.note}</span>`;
 
     return { success: true, msg: finalMsg, memName: mOut.nama };
   } catch (err) {
     return { success: false, msg: "Ralat pemprosesan QR: " + err.message };
   }
+}
+
+// ======================================================================
+// FUNGSI SIMULASI UJI CUBA QR (TEST HARNESS UNTUK GOOGLE APPS SCRIPT)
+// ======================================================================
+/**
+ * Jalankan fungsi ini terus di Google Apps Script Editor untuk menguji proses QR tanpa kamera.
+ * Anda boleh menukar nombor KP di bawah dengan No KP anggota sebenar yang ada jadual tugas hari ini.
+ */
+function testQRSimulation() {
+  const db = getAppData();
+  if (!db.members || db.members.length === 0) {
+    Logger.log("RALAT: Tiada anggota didaftarkan di dalam tab Members.");
+    return;
+  }
+
+  // Pilih anggota pertama sebagai sampel ujian
+  const testMember = db.members[0];
+  const cleanKp = String(testMember.kp).replace(/'/g, '');
+
+  Logger.log("=== 1. UJIAN SEMAKAN KELAYAKAN KIOSK ===");
+  const checkRes = checkKioskEligibility(cleanKp);
+  Logger.log(JSON.stringify(checkRes, null, 2));
+
+  Logger.log("\n=== 2. UJIAN CLOCK-IN KIOSK ===");
+  const clockInPayload = {
+    action: 'clockin_only',
+    scannerId: cleanKp,
+    coords: { lat: 1.854321, lng: 102.932456 }
+  };
+  const clockInRes = processQRScan(clockInPayload);
+  Logger.log(JSON.stringify(clockInRes, null, 2));
+
+  Logger.log("\n=== 3. UJIAN CLOCK-OUT KIOSK ===");
+  const clockOutPayload = {
+    action: 'checkout_only',
+    scannerId: cleanKp,
+    coords: { lat: 1.854321, lng: 102.932456 }
+  };
+  const clockOutRes = processQRScan(clockOutPayload);
+  Logger.log(JSON.stringify(clockOutRes, null, 2));
 }
