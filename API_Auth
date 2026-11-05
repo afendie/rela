@@ -1,0 +1,211 @@
+/**
+ * SISTEM PENGURUSAN TUNTUTAN ELAUN RELA - BATU PAHAT
+ * Fail: API_Auth.gs (Logik Sesi, OTP & Kawalan Pertukaran Kata Laluan)
+ * 
+ * Menguruskan pengesahan pengguna, pemulihan OTP melalui e-mel,
+ * dan logik pengemaskinian kata laluan pengguna semasa sesi aktif.
+ */
+
+// ======================================================================
+// 1. LOG MASUK PENTADBIR (TPRD)
+// ======================================================================
+function loginAdmin(pass) {
+  try {
+    const lockKey = "ADMIN";
+    const locked = checkLock_(lockKey);
+    if (locked) {
+      return { success: false, msg: "Terlalu banyak cubaan gagal dikesan. Akses disekat selama 5 minit." };
+    }
+
+    const storedHash = getSettingValue_('admin_pass_hash');
+    if (!storedHash) {
+      return { success: false, msg: "Ralat: Hash pentadbir belum ditetapkan di Settings." };
+    }
+
+    if (sha256_(pass) !== storedHash) {
+      recordFail_(lockKey);
+      return { success: false, msg: "Kata laluan TPRD salah!" };
+    }
+
+    resetFail_(lockKey);
+    logLogin_("admin", "ADMIN", "SUCCESS", "Log masuk pentadbir berjaya");
+    return createSession_("admin", "Administrator", "all");
+  } catch (err) {
+    return { success: false, msg: "Ralat log masuk pentadbir: " + err.message };
+  }
+}
+
+// ======================================================================
+// 2. LOG MASUK PENYELIA SEKTOR CAWANGAN
+// ======================================================================
+function loginSupervisor(id, pass) {
+  try {
+    const cleanId = String(id).trim().toLowerCase();
+    const lockKey = "SV_" + cleanId;
+    const locked = checkLock_(lockKey);
+    if (locked) {
+      return { success: false, msg: "Cubaan log masuk disekat. Sila cuba lagi dalam masa 5 minit." };
+    }
+
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = ss.getSheetByName("Supervisors");
+    if (!sheet) return { success: false, msg: "Ralat Sistem: Fail Supervisors tiada." };
+
+    const rows = sheet.getDataRange().getValues().slice(1);
+    const sv = rows.find(r => String(r[0]).toLowerCase() === cleanId);
+    if (!sv) {
+      recordFail_(lockKey);
+      return { success: false, msg: "ID Penyelia tidak berdaftar dalam sistem." };
+    }
+
+    const name = String(sv[1]);
+    const locId = String(sv[2]);
+    const storedHash = String(sv[4] || "");
+
+    if (sha256_(pass) !== storedHash) {
+      recordFail_(lockKey);
+      return { success: false, msg: "Kata laluan Penyelia salah!" };
+    }
+
+    resetFail_(lockKey);
+    logLogin_("penyelia", id, "SUCCESS", `Log masuk penyelia bagi sektor: ${locId}`);
+    return createSession_("penyelia", name, locId);
+  } catch (err) {
+    return { success: false, msg: "Ralat log masuk penyelia: " + err.message };
+  }
+}
+
+// ======================================================================
+// 3. LOG KELUAR PENGGUNA
+// ======================================================================
+function logoutUser(token) {
+  try {
+    if (!token) return { success: true };
+    CacheService.getScriptCache().remove("SESS_" + token);
+    return { success: true };
+  } catch (err) {
+    return { success: false, msg: "Ralat log keluar: " + err.message };
+  }
+}
+
+// ======================================================================
+// 4. PENJANAAN DAN PENGHANTARAN OTP
+// ======================================================================
+function sendOTP(email) {
+  try {
+    const db = getAppData();
+    let emailClean = String(email).trim().toLowerCase();
+    let userFound = false;
+
+    if (emailClean === String(db.settings.admin_email).trim().toLowerCase()) userFound = true;
+    if (!userFound && db.supervisors.find(s => String(s.email).trim().toLowerCase() === emailClean)) userFound = true;
+
+    if (!userFound) return { success: false, msg: "E-mel ini tidak ditemui di dalam pangkalan data." };
+
+    // Jana 6-digit OTP rawak
+    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+    CacheService.getScriptCache().put("OTP_" + emailClean, otpCode, 300); // Sah 5 minit (300s)
+
+    MailApp.sendEmail(
+      emailClean,
+      "KOD PENGESAHAN OTP - RELA BATU PAHAT",
+      `Sila gunakan kod OTP berikut bagi menetapkan semula kata laluan anda.\n\n` +
+      `Kod OTP: ${otpCode}\n\n` +
+      `Kod ini hanya sah selama 5 minit dari sekarang. Jangan dedahkan kod ini kepada sesiapa.`
+    );
+    return { success: true, msg: "Kod OTP berjaya dihantar ke peti mel e-mel berdaftar anda." };
+  } catch (e) {
+    return { success: false, msg: "Gagal menghantar e-mel pengesahan. Sila hubungi Admin: " + e.message };
+  }
+}
+
+// ======================================================================
+// 5. PENGESAHAN OTP & RESET KATA LALUAN
+// ======================================================================
+function verifyOTPAndResetPassword(email, otp, newPass) {
+  try {
+    const cache = CacheService.getScriptCache();
+    const emailClean = String(email).trim().toLowerCase();
+    const savedOtp = cache.get("OTP_" + emailClean);
+
+    if (!savedOtp || String(otp).trim() !== savedOtp) {
+      return { success: false, msg: "Kod OTP salah atau telah tamat tempoh." };
+    }
+
+    const hashedPass = sha256_(String(newPass).trim());
+    const db = getAppData();
+
+    // Jika e-mel adalah milik pentadbir
+    if (emailClean === String(db.settings.admin_email).trim().toLowerCase()) {
+      syncRecord("Settings", 0, "admin_pass_hash", ["admin_pass_hash", hashedPass]);
+      cache.remove("OTP_" + emailClean);
+      return { success: true, msg: "Kata laluan Pentadbir (TPRD) berjaya ditukar." };
+    }
+
+    // Jika e-mel adalah milik penyelia
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = ss.getSheetByName("Supervisors");
+    if (!sheet) return { success: false, msg: "Ralat: Tab Supervisors tiada." };
+
+    const rows = sheet.getDataRange().getValues();
+    for (let i = 1; i < rows.length; i++) {
+      if (String(rows[i][3]).trim().toLowerCase() === emailClean) {
+        sheet.getRange(i + 1, 5).setValue(hashedPass);
+        cache.remove("OTP_" + emailClean);
+        return { success: true, msg: "Kata laluan Penyelia berjaya ditukar." };
+      }
+    }
+    return { success: false, msg: "Ralat: Gagal memadankan profil e-mel." };
+  } catch (err) {
+    return { success: false, msg: "Ralat menetapkan kata laluan: " + err.message };
+  }
+}
+
+// ======================================================================
+// 6. PERTUKARAN KATA LALUAN SEMASA SESI AKTIF
+// ======================================================================
+function changeMyPassword(token, oldPass, newPass) {
+  try {
+    const sess = verifySession_(token);
+    if (!sess) return { success: false, msg: "Sesi tamat." };
+
+    const oldHash = sha256_(String(oldPass).trim());
+    const newHash = sha256_(String(newPass).trim());
+
+    if (sess.role === "admin") {
+      const db = getAppData();
+      if (String(db.settings.admin_pass_hash || "") !== oldHash) {
+        return { success: false, msg: "Kata laluan lama pentadbir salah!" };
+      }
+      syncRecord("Settings", 0, "admin_pass_hash", ["admin_pass_hash", newHash]);
+      return { success: true, msg: "Kata laluan TPRD berjaya dikemaskini." };
+    }
+
+    if (sess.role === "penyelia") {
+      const data = getAppData();
+      const sv = data.supervisors.find(s => String(s.id).toLowerCase() === String(sess.user).toLowerCase() || String(s.name) === String(sess.user));
+      const sv2 = data.supervisors.find(s => String(s.name) === String(sess.user) && String(s.locId) === String(sess.locId));
+      const target = sv2 || sv;
+
+      if (!target) return { success: false, msg: "Ralat: Profil penyelia tidak ditemui." };
+
+      const ss = SpreadsheetApp.getActiveSpreadsheet();
+      const sheet = ss.getSheetByName("Supervisors");
+      if (!sheet) return { success: false, msg: "Ralat: Tab Supervisors tiada." };
+
+      const rows = sheet.getDataRange().getValues();
+      for (let i = 1; i < rows.length; i++) {
+        if (String(rows[i][0]) === String(target.id)) {
+          if (String(rows[i][4] || "") !== oldHash) {
+            return { success: false, msg: "Kata laluan lama anda salah!" };
+          }
+          sheet.getRange(i + 1, 5).setValue(newHash);
+          return { success: true, msg: "Kata laluan Penyelia berjaya dikemaskini." };
+        }
+      }
+    }
+    return { success: false, msg: "Gagal memproses penukaran kata laluan." };
+  } catch (err) {
+    return { success: false, msg: "Ralat penukaran kata laluan: " + err.message };
+  }
+}
