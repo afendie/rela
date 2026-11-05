@@ -1,0 +1,1917 @@
+<script>
+  // ==============================================================
+  // ENJIN JANAAN PDF KHAS (SINGLE-SHOT HANDSHAKE BEBAS PERLUMBAAN)
+  // ==============================================================
+  function generatePDFReport(type) {
+    const st = window.appState;
+    const previewUrl = st.db.settings.github_preview_url || PREVIEW_URL;
+    
+    if (!previewUrl || previewUrl.trim() === '') {
+      return alertMsg('Ralat: URL Pratonton Laporan GitHub Pages tidak sah di Tetapan.', 'warning');
+    }
+
+    // Modal Pilihan Dwi-Format untuk Lampiran B (Format Baharu PTJ RELA)
+    if (type === 'B') {
+      st.formModal.title = 'Rumusan Tuntutan Pembayaran PTJ RELA';
+      document.getElementById('form-body-inject').innerHTML = `
+        <div class="space-y-6 text-center page-transition">
+          <div class="w-16 h-16 bg-blue-50 text-blue-600 rounded-3xl flex items-center justify-center mx-auto text-2xl border border-blue-100 shadow-sm">
+            <i class="fas fa-clipboard-list"></i>
+          </div>
+          <div>
+            <h4 class="text-sm font-black text-slate-800 uppercase tracking-wide">Rumusan Tuntutan Pembayaran PTJ RELA</h4>
+            <p class="text-xs text-slate-500 mt-1 leading-relaxed">Sila pilih format muat turun fail yang anda inginkan:</p>
+          </div>
+          <div class="grid grid-cols-2 gap-4 pt-2">
+            <button onclick="executeReportPDFJS('B')" class="py-4.5 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-lg active:scale-95 transition-all flex flex-col items-center justify-center gap-2">
+              <i class="fas fa-file-pdf text-xl"></i>
+              <span>Janaan PDF</span>
+            </button>
+            <button onclick="executeReportExcelJS('B')" class="py-4.5 bg-gradient-to-r from-emerald-500 to-teal-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-lg active:scale-95 transition-all flex flex-col items-center justify-center gap-2">
+              <i class="fas fa-file-excel text-xl"></i>
+              <span>Muat Turun Excel</span>
+            </button>
+          </div>
+        </div>
+      `;
+      st.formModal.open = true;
+      return;
+    }
+
+    // Modal Pilihan Dwi-Format untuk Rumusan Bank
+    if (type === 'BANK') {
+      st.formModal.title = 'Rumusan Maklumat Akaun Bank';
+      document.getElementById('form-body-inject').innerHTML = `
+        <div class="space-y-6 text-center page-transition">
+          <div class="w-16 h-16 bg-purple-50 text-purple-600 rounded-3xl flex items-center justify-center mx-auto text-2xl border border-purple-100 shadow-sm">
+            <i class="fas fa-building-columns"></i>
+          </div>
+          <div>
+            <h4 class="text-sm font-black text-slate-800 uppercase tracking-wide">Rumusan Maklumat Akaun Bank</h4>
+            <p class="text-xs text-slate-500 mt-1 leading-relaxed">Sila pilih format muat turun fail yang anda inginkan:</p>
+          </div>
+          <div class="grid grid-cols-2 gap-4 pt-2">
+            <button onclick="executeReportPDFJS('BANK')" class="py-4.5 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-lg active:scale-95 transition-all flex flex-col items-center justify-center gap-2">
+              <i class="fas fa-file-pdf text-xl"></i>
+              <span>Janaan PDF</span>
+            </button>
+            <button onclick="executeReportExcelJS('BANK')" class="py-4.5 bg-gradient-to-r from-emerald-500 to-teal-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-lg active:scale-95 transition-all flex flex-col items-center justify-center gap-2">
+              <i class="fas fa-file-excel text-xl"></i>
+              <span>Muat Turun Excel</span>
+            </button>
+          </div>
+        </div>
+      `;
+      st.formModal.open = true;
+      return;
+    }
+
+    // Modal Pilihan Dwi-Format untuk Pengakuan Tuntutan
+    if (type === 'PENGAKUAN') {
+      st.formModal.title = 'Pengakuan Tuntutan Elaun';
+      document.getElementById('form-body-inject').innerHTML = `
+        <div class="space-y-6 text-center page-transition">
+          <div class="w-16 h-16 bg-rose-50 text-rose-600 rounded-3xl flex items-center justify-center mx-auto text-2xl border border-rose-100 shadow-sm">
+            <i class="fas fa-file-signature"></i>
+          </div>
+          <div>
+            <h4 class="text-sm font-black text-slate-800 uppercase tracking-wide">Pengakuan Tuntutan Elaun</h4>
+            <p class="text-xs text-slate-500 mt-1 leading-relaxed">Sila pilih format muat turun fail yang anda inginkan:</p>
+          </div>
+          <div class="grid grid-cols-2 gap-4 pt-2">
+            <button onclick="executeReportPDFJS('PENGAKUAN')" class="py-4.5 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-lg active:scale-95 transition-all flex flex-col items-center justify-center gap-2">
+              <i class="fas fa-file-pdf text-xl"></i>
+              <span>Janaan PDF</span>
+            </button>
+            <button onclick="executeReportExcelJS('PENGAKUAN')" class="py-4.5 bg-gradient-to-r from-emerald-500 to-teal-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-lg active:scale-95 transition-all flex flex-col items-center justify-center gap-2">
+              <i class="fas fa-file-excel text-xl"></i>
+              <span>Muat Turun Excel</span>
+            </button>
+          </div>
+        </div>
+      `;
+      st.formModal.open = true;
+      return;
+    }
+
+    // Modal Pilihan Dwi-Format untuk Jadual Roster
+    if (type === 'JADUAL') {
+      st.formModal.title = 'Jadual Syif Penugasan (Roster)';
+      document.getElementById('form-body-inject').innerHTML = `
+        <div class="space-y-6 text-center page-transition">
+          <div class="w-16 h-16 bg-emerald-50 text-emerald-600 rounded-3xl flex items-center justify-center mx-auto text-2xl border border-emerald-100 shadow-sm">
+            <i class="fas fa-calendar-days"></i>
+          </div>
+          <div>
+            <h4 class="text-sm font-black text-slate-800 uppercase tracking-wide">Jadual Syif Penugasan (Roster)</h4>
+            <p class="text-xs text-slate-500 mt-1 leading-relaxed">Sila pilih format muat turun fail yang anda inginkan:</p>
+          </div>
+          <div class="grid grid-cols-2 gap-4 pt-2">
+            <button onclick="executeReportPDFJS('JADUAL')" class="py-4.5 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-lg active:scale-95 transition-all flex flex-col items-center justify-center gap-2">
+              <i class="fas fa-file-pdf text-xl"></i>
+              <span>Janaan PDF</span>
+            </button>
+            <button onclick="executeReportExcelJS('JADUAL')" class="py-4.5 bg-gradient-to-r from-emerald-500 to-teal-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-lg active:scale-95 transition-all flex flex-col items-center justify-center gap-2">
+              <i class="fas fa-file-excel text-xl"></i>
+              <span>Muat Turun Excel</span>
+            </button>
+          </div>
+        </div>
+      `;
+      st.formModal.open = true;
+      return;
+    }
+
+    // Modal Pilihan Dwi-Format untuk Lampiran AFFIN
+    if (type === 'AFFIN') {
+      st.formModal.title = 'Janaan Lampiran AFFIN (Corporate IBG)';
+      document.getElementById('form-body-inject').innerHTML = `
+        <div class="space-y-6 text-center page-transition">
+          <div class="w-16 h-16 bg-amber-50 text-amber-600 rounded-3xl flex items-center justify-center mx-auto text-2xl border border-amber-100 shadow-sm">
+            <i class="fas fa-money-check-dollar"></i>
+          </div>
+          <div>
+            <h4 class="text-sm font-black text-slate-800 uppercase tracking-wide">Lampiran AFFIN (Corporate IBG)</h4>
+            <p class="text-xs text-slate-500 mt-1 leading-relaxed">Sila pilih format muat turun fail yang anda inginkan:</p>
+          </div>
+          <div class="grid grid-cols-2 gap-4 pt-2">
+            <button onclick="executeAffinPDFJS()" class="py-4.5 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-lg active:scale-95 transition-all flex flex-col items-center justify-center gap-2">
+              <i class="fas fa-file-pdf text-xl"></i>
+              <span>Janaan PDF</span>
+            </button>
+            <button onclick="executeAffinExcelJS()" class="py-4.5 bg-gradient-to-r from-emerald-500 to-teal-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-lg active:scale-95 transition-all flex flex-col items-center justify-center gap-2">
+              <i class="fas fa-file-excel text-xl"></i>
+              <span>Muat Turun Excel</span>
+            </button>
+          </div>
+        </div>
+      `;
+      st.formModal.open = true;
+      return;
+    }
+
+    // Modal Pilihan Dwi-Format untuk Borang Tuntutan Lampiran D
+    if (type === 'TUNTUTAN') {
+      let reportLocIds = [];
+      if (st.locId === 'all') {
+        if (st.role === 'admin') {
+          reportLocIds = st.db.locations.map(l => l.id);
+        } else {
+          reportLocIds = st.allowedLocs.split(',');
+        }
+      } else {
+        reportLocIds = [st.locId];
+      }
+      
+      const mems = (st.db && st.db.members ? st.db.members : []).filter(m => reportLocIds.includes(m.locId));
+      const activeMems = mems.filter((m) => calcMemberStats(m.id, st).hrs > 0);
+      
+      if (activeMems.length === 0) {
+        return alertMsg('Tiada anggota yang bertugas aktif dikesan pada tempoh ini.', 'warning');
+      }
+
+      let memberOptions = activeMems.map(m => `<option value="${m.id}">${(m.nama || '').toUpperCase()} (${m.kp || ''})</option>`).join('');
+      st.formModal.title = 'Borang Tuntutan Lampiran D';
+      document.getElementById('form-body-inject').innerHTML = `
+        <div class="space-y-6 page-transition">
+          <div class="w-16 h-16 bg-indigo-50 text-indigo-600 rounded-3xl flex items-center justify-center mx-auto text-2xl border border-indigo-100 shadow-sm">
+            <i class="fas fa-file-invoice-dollar"></i>
+          </div>
+          <div class="text-center">
+            <h4 class="text-sm font-black text-slate-800 uppercase tracking-wide">Borang Tuntutan Lampiran D</h4>
+            <p class="text-xs text-slate-500 mt-1">Sila pilih anggota bertugas serta format fail pilihan anda:</p>
+          </div>
+          <div class="space-y-2 text-left">
+            <label class="text-[10px] font-black text-slate-400 uppercase tracking-wider ml-1">Pilihan Petugas</label>
+            <select id="modal-select-member" class="w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold outline-none cursor-pointer">
+              <option value="ALL">CETAK PUKAL SEMUA ANGGOTA (${activeMems.length} Orang)</option>
+              ${memberOptions}
+            </select>
+          </div>
+          <div class="grid grid-cols-2 gap-4 pt-2">
+            <button onclick="executeTuntutanPDFJS()" class="py-4.5 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-lg active:scale-95 transition-all flex flex-col items-center justify-center gap-2">
+              <i class="fas fa-file-pdf text-xl"></i>
+              <span>Janaan PDF</span>
+            </button>
+            <button onclick="executeTuntutanExcelJS()" class="py-4.5 bg-gradient-to-r from-emerald-500 to-teal-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-lg active:scale-95 transition-all flex flex-col items-center justify-center gap-2">
+              <i class="fas fa-file-excel text-xl"></i>
+              <span>Muat Turun Excel</span>
+            </button>
+          </div>
+        </div>
+      `;
+      st.formModal.open = true;
+      return;
+    }
+
+    executeDirectPDFGeneration(type, previewUrl);
+  }
+
+  // Pelaksanaan Janaan PDF Langsung Melalui Handshake
+  function executeDirectPDFGeneration(type, previewUrl) {
+    const st = window.appState;
+    const previewWin = window.open(previewUrl, '_blank');
+    if (!previewWin) {
+      return alertMsg('Sekatan Pelayar dikesan! Sila benarkan tetingkap timbul bagi melihat laporan.', 'warning');
+    }
+    showLoading(true);
+
+    let pdfGeneratedData = null;
+    let isPreviewReady = false;
+    if (window.currentPdfHandshake) {
+      window.removeEventListener('message', window.currentPdfHandshake);
+      window.currentPdfHandshake = null;
+    }
+
+    const handleHandshake = (event) => {
+      try {
+        const expectedOrigin = new URL(previewUrl).origin;
+        if (event.origin !== expectedOrigin) return;
+      } catch (err) {
+        return;
+      }
+      
+      if (event.data && event.data.type === 'PREVIEW_READY') {
+        isPreviewReady = true;
+        attemptSend();
+      }
+    };
+    window.currentPdfHandshake = handleHandshake;
+    window.addEventListener('message', handleHandshake);
+
+    function attemptSend() {
+      if (isPreviewReady && pdfGeneratedData) {
+        const targetOrigin = new URL(previewUrl).origin;
+        previewWin.postMessage({
+          type: 'PDF_DATA',
+          data: pdfGeneratedData.uri,
+          filename: pdfGeneratedData.filename,
+          title: pdfGeneratedData.title
+        }, targetOrigin);
+        
+        window.removeEventListener('message', handleHandshake);
+        window.currentPdfHandshake = null;
+        showLoading(false);
+      }
+    }
+
+    setTimeout(() => {
+      try {
+        const { jsPDF } = window.jspdf;
+        const maxD = new Date(st.year, st.month, 0).getDate();
+        
+        let reportLocIds = [];
+        if (st.locId === 'all') {
+          if (st.role === 'admin') {
+            reportLocIds = st.db.locations.map(l => l.id);
+          } else {
+            reportLocIds = st.allowedLocs.split(',');
+          }
+        } else {
+          reportLocIds = [st.locId];
+        }
+        const mems = st.db.members.filter(m => reportLocIds.includes(m.locId));
+        let locNameDisplay = "";
+        
+        if (reportLocIds.length === 1) {
+          const lObj = st.db.locations.find(l => l.id === reportLocIds[0]);
+          locNameDisplay = lObj ? lObj.name.toUpperCase() : "LOKASI TIDAK DIKETAHUI";
+        } else {
+          const names = reportLocIds.map(id => st.db.locations.find(x => x.id === id)?.short || id);
+          locNameDisplay = `KUMULATIF LOKASI (${names.join(', ')})`;
+        }
+        
+        const reportTitleDate = `01 HINGGA ${maxD} ${M_SHORT[st.month-1].toUpperCase()} ${st.year}`;
+        let doc;
+        
+        const sanitizeFilename = (str) => str.toUpperCase().replace(/[^A-Z0-9]/gi, '_').replace(/_+/g, '_').trim();
+        const cleanedLocName = sanitizeFilename(locNameDisplay);
+        const cleanedMonthName = sanitizeFilename(M_SHORT[st.month-1]);
+        let finalFilename = `Laporan_${type}_${cleanedLocName}_${cleanedMonthName}_${st.year}.pdf`;
+        
+        const enabledNbcLocs = (st.db.settings.nbc_enabled_locations || '').split(',');
+        const anyNbc = reportLocIds.some(id => enabledNbcLocs.includes(id));
+
+        // ======================================================================
+        // --- BLOK JANAAN PDF LAMPIRAN B FORMAT BAHARU (TANGKAP LAYAR RASMI) ---
+        // ======================================================================
+        if (type === 'B') {
+          finalFilename = `Rumusan_PTJ_RELA_${cleanedLocName}_${cleanedMonthName}_${st.year}.pdf`;
+          let activeMems = mems.filter((m) => calcMemberStats(m.id, st).hrs > 0);
+          let grandTotalDays = 0, grandTotalHours = 0, grandTotalAllowance = 0, grandTotalIncentive = 0, grandTotalSme = 0;
+          let dailyActiveHours = Array(maxD).fill(0);
+          let rNum = 1;
+
+          const memberItems = [];
+          activeMems.forEach((m) => {
+            const stats = calcMemberStats(m.id, st);
+            const isNbcLocation = enabledNbcLocs.includes(m.locId);
+            const isSme = String(m.sme || '').toUpperCase() === 'YA';
+            const smeAmount = isSme ? (stats.smeAmount || 0) : 0;
+            const incAmount = isNbcLocation ? (stats.incentive || 0) : 0;
+            const totalAnggota = stats.allowance + incAmount + smeAmount;
+
+            let dailyHoursByDay = [];
+            for (let d = 1; d <= maxD; d++) {
+              const k = `${m.locId}-${m.id}-${st.year}-${st.month}-${d}`;
+              const val = st.db.attendance[k] || 'X';
+              const hrs = parseFloat(val);
+              if (val !== 'X' && !isNaN(hrs) && hrs > 0) {
+                dailyActiveHours[d-1] += hrs;
+                dailyHoursByDay.push(hrs.toString());
+              } else {
+                dailyHoursByDay.push('X');
+              }
+            }
+
+            let rowNormal = [
+              rNum++,
+              m.nama.toUpperCase(),
+              ...dailyHoursByDay,
+              stats.dys,
+              stats.hrs,
+              (parseFloat(m.kadar) || 8).toFixed(2),
+              formatRM(stats.allowance),
+              formatRM(incAmount),
+              formatRM(smeAmount),
+              formatRM(totalAnggota)
+            ];
+
+            grandTotalDays += stats.dys;
+            grandTotalHours += stats.hrs;
+            grandTotalAllowance += stats.allowance;
+            grandTotalIncentive += incAmount;
+            grandTotalSme += smeAmount;
+
+            let visualLinesCount = 1;
+            if ((m.nama || '').trim().length > 25) {
+              visualLinesCount = 2;
+            }
+            memberItems.push({ rows: [rowNormal], heightCount: visualLinesCount });
+          });
+
+          function partitionBPage(items, maxNormal, maxFinal, minFinalData) {
+            let pages = [];
+            let currentChunk = [];
+            let currentChunkHeight = 0;
+            const rowHt = 4.3;
+            for (let i = 0; i < items.length; i++) {
+              let item = items[i];
+              let itemHeight = item.heightCount * rowHt;
+              let remainingItems = items.slice(i + 1);
+              let remainingHeight = remainingItems.reduce((s, x) => s + x.heightCount * rowHt, 0);
+
+              if (currentChunkHeight + itemHeight + remainingHeight <= maxFinal) {
+                currentChunk.push(item);
+                currentChunk.push(...remainingItems);
+                pages.push(currentChunk.flatMap(x => x.rows));
+                currentChunk = [];
+                break;
+              }
+
+              if (currentChunkHeight + itemHeight > maxNormal) {
+                pages.push(currentChunk.flatMap(x => x.rows));
+                currentChunk = [item];
+                currentChunkHeight = itemHeight;
+              } else {
+                if (remainingHeight > 0 && remainingHeight < minFinalData) {
+                  pages.push(currentChunk.flatMap(x => x.rows));
+                  currentChunk = [item];
+                  currentChunkHeight = itemHeight;
+                } else {
+                  currentChunk.push(item);
+                  currentChunkHeight += itemHeight;
+                }
+              }
+            }
+            if (currentChunk.length > 0) {
+              pages.push(currentChunk.flatMap(x => x.rows));
+            }
+            return pages;
+          }
+
+          let pages = partitionBPage(memberItems, 120, 95, 22);
+          const isMultiPage = (pages.length > 1);
+          const cellPaddingVal = isMultiPage ? 0.9 : 0.7;
+          const fontSizeVal = isMultiPage ? 5.2 : 5.0;
+          const signatureSpacing = 10;
+          const orphanThreshold = 55;
+          const grandTotalAll = grandTotalAllowance + grandTotalIncentive + grandTotalSme;
+
+          // ===================================================================
+          // PENYUSUNAN SEMULA BARIS RUMUSAN & JUMLAH KESELURUHAN (KEMAS & KONSISTEN)
+          // ===================================================================
+          // Baris 1: JUMLAH JAM SEHARI
+          let summaryRow1 = [
+            { content: 'JUMLAH JAM SEHARI', colSpan: 2, styles: { halign: 'center', fontStyle: 'bold' } }
+          ];
+          for (let d = 1; d <= maxD; d++) {
+            summaryRow1.push(dailyActiveHours[d-1] > 0 ? dailyActiveHours[d-1].toString() : '0');
+          }
+          summaryRow1.push({ content: 'JUMLAH', colSpan: 3, styles: { halign: 'center', fontStyle: 'bold' } });
+          summaryRow1.push({ content: formatRM(grandTotalAllowance), styles: { halign: 'center', fontStyle: 'bold' } });
+          summaryRow1.push({ content: formatRM(grandTotalIncentive), styles: { halign: 'center', fontStyle: 'bold' } });
+          summaryRow1.push({ content: formatRM(grandTotalSme), styles: { halign: 'center', fontStyle: 'bold' } });
+          summaryRow1.push({ content: '', styles: { halign: 'center' } });
+
+          // Baris 2: JUMLAH KESELURUHAN (DITENGAHKAN / CENTERED UNTUK ESTETIKA SEIMBANG & KEMAS)
+          let summaryRow2 = [
+            { 
+              content: 'JUMLAH KESELURUHAN', 
+              colSpan: 2 + maxD + 3, 
+              styles: { halign: 'center', fontStyle: 'bold', fontSize: 6.5, cellPadding: 1.4 } 
+            },
+            { 
+              content: `RM ${formatRM(grandTotalAll)}`, 
+              colSpan: 4, 
+              styles: { halign: 'center', fontStyle: 'bold', fontSize: 6.8, textColor: [0, 0, 0], cellPadding: 1.4 } 
+            }
+          ];
+
+          doc = new jsPDF('l', 'mm', 'a4');
+          const totalPagesCount = pages.length;
+          pages.forEach((pageRows, pageIndex) => {
+            const isFirstPage = (pageIndex === 0);
+            const isLastPage = (pageIndex === totalPagesCount - 1);
+            if (!isFirstPage) doc.addPage();
+
+            // Pengepala Format Baharu PTJ RELA
+            doc.setFont('helvetica', 'bold').setFontSize(9.5).setTextColor(0, 0, 0);
+            doc.text('RUMUSAN TUNTUTAN PEMBAYARAN PTJ RELA', 148.5, 12, { align: 'center' });
+            doc.setFontSize(8.5);
+            doc.text('JABATAN SUKARELAWAN MALAYSIA (RELA)', 148.5, 16.5, { align: 'center' });
+            doc.text(`LOKASI PENUGASAN: ${locNameDisplay}`, 148.5, 21, { align: 'center' });
+            
+            const daerahText = (st.db.settings.report_daerah || 'BATU PAHAT').toUpperCase();
+            const bulanNama = M_NAMES[st.month - 1].toUpperCase();
+            doc.setFontSize(8);
+            doc.text(`DAERAH: ${daerahText} NEGERI: JOHOR BULAN: ${bulanNama} TAHUN: ${st.year}`, 148.5, 25.5, { align: 'center' });
+
+            let headRow1 = [
+              { content: 'BIL', rowSpan: 2 },
+              { content: 'NAMA PETUGAS', rowSpan: 2 },
+              { content: 'TARIKH DAN JUMLAH JAM BERTUGAS (8JAM = 8) (TIDAK BERTUGAS = 0)', colSpan: maxD },
+              { content: 'BIL. HARI', rowSpan: 2 },
+              { content: 'BIL. JAM', rowSpan: 2 },
+              { content: 'KADAR\nTUNTUTAN\nSEJAM (RM)', rowSpan: 2 },
+              { content: 'JUMLAH\nELAUN (RM)', rowSpan: 2 },
+              { content: 'JUMLAH\nINSENTIF (RM)', rowSpan: 2 },
+              { content: 'JUMLAH\nSME (RM)', rowSpan: 2 },
+              { content: 'JUMLAH\n(RM)', rowSpan: 2 }
+            ];
+
+            let headRow2 = [];
+            for (let d = 1; d <= maxD; d++) headRow2.push(d.toString());
+
+            let renderRows = [...pageRows];
+            if (isLastPage) {
+              renderRows.push(summaryRow1);
+              renderRows.push(summaryRow2);
+            }
+
+            let colStyles = {
+              0: { cellWidth: 8 },
+              1: { halign: 'left', cellWidth: 38 },
+              [maxD + 2]: { halign: 'center', cellWidth: 10 },
+              [maxD + 3]: { halign: 'center', cellWidth: 10 },
+              [maxD + 4]: { halign: 'center', cellWidth: 13 },
+              [maxD + 5]: { halign: 'center', cellWidth: 15 },
+              [maxD + 6]: { halign: 'center', cellWidth: 14 },
+              [maxD + 7]: { halign: 'center', cellWidth: 13 },
+              [maxD + 8]: { halign: 'center', fontStyle: 'bold', cellWidth: 16 }
+            };
+
+            const tableStartY = 28.5;
+
+            doc.autoTable({
+              startY: tableStartY,
+              head: [headRow1, headRow2],
+              body: renderRows,
+              theme: 'grid',
+              styles: { fontSize: fontSizeVal, cellPadding: cellPaddingVal, halign: 'center', valign: 'middle', lineColor: [0, 0, 0], lineWidth: 0.1, textColor: [0, 0, 0] },
+              columnStyles: colStyles,
+              headStyles: { fillColor: [248, 250, 252], textColor: [0, 0, 0], fontStyle: 'bold' },
+              didParseCell: function (data) {
+                if (data.section === 'body' && data.cell.text[0] === 'X') {
+                  data.cell.styles.fillColor = [254, 242, 242];
+                  data.cell.styles.textColor = [220, 38, 38];
+                }
+                if (isLastPage && data.section === 'body' && data.row.index >= data.table.body.length - 2) {
+                  data.cell.styles.fontStyle = 'bold';
+                  data.cell.styles.fillColor = [241, 245, 249];
+                  data.cell.styles.textColor = [15, 23, 42];
+                }
+              }
+            });
+
+            if (isLastPage) {
+              let finalY = doc.lastAutoTable.finalY + 3;
+              if (210 - finalY < orphanThreshold) {
+                doc.addPage();
+                finalY = 15;
+              }
+
+              // Nota Panduan Rasmi
+              doc.setFont('helvetica', 'bold').setFontSize(6.2).setTextColor(0, 0, 0);
+              doc.text('NOTA: ', 12, finalY);
+              doc.setFont('helvetica', 'normal');
+              doc.text('Senarai bilangan Petugas dan tarikh boleh dipinda manakala format asal perlu dikekalkan. Sila garis/ palang ruangan yang tidak berkenaan', 21, finalY);
+
+              // 3 Ruangan Pengesahan (Signature Box)
+              const signatureY = finalY + signatureSpacing;
+              doc.setFontSize(7).setFont('helvetica', 'bold').setTextColor(0, 0, 0)
+                .text('DISEDIAKAN OLEH (PT/PPRD ):', 15, signatureY)
+                .text('DISEMAK OLEH (PRD/PPRD):', 110, signatureY)
+                .text('DILULUSKAN OLEH (PRN/KOMANDAN/PO/EO):', 205, signatureY);
+
+              const lineY = signatureY + 4;
+              doc.setFont('helvetica', 'normal').setFontSize(6.5)
+                .text('TANDATANGAN:', 15, lineY + 3)
+                .text('NAMA:', 15, lineY + 7.5)
+                .text('JAWATAN:', 15, lineY + 12)
+                .text('TARIKH:', 15, lineY + 16.5);
+
+              doc.text('TANDATANGAN:', 110, lineY + 3)
+                .text('NAMA:', 110, lineY + 7.5)
+                .text('JAWATAN:', 110, lineY + 12)
+                .text('TARIKH:', 110, lineY + 16.5);
+
+              doc.text('TANDATANGAN:', 205, lineY + 3)
+                .text('NAMA :', 205, lineY + 7.5)
+                .text('JAWATAN:', 205, lineY + 12)
+                .text('TARIKH:', 205, lineY + 16.5);
+            }
+          });
+        }
+        
+        // --- MODUL: PENGAKUAN TUNTUTAN ELAUN ---
+        else if (type === 'PENGAKUAN') {
+          let combinedGroupTitle = locNameDisplay;
+          finalFilename = `Pengakuan_Tuntutan_${sanitizeFilename(combinedGroupTitle)}_${cleanedMonthName}_${st.year}.pdf`;
+          let activeMems = st.db.members.filter(m => reportLocIds.includes(m.locId) && calcMemberStats(m.id, st).hrs > 0);
+          let tA = 0;
+          activeMems.forEach(m => tA += calcMemberStats(m.id, st).total);
+          
+          let titleText = anyNbc ? (st.db.settings.title_pengakuan_nbc || "PENGAKUAN TUNTUTAN ELAUN SERTA INSENTIF ANGGOTA DALAM PENUGASAN KOLABORASI RELA - PGA BAGI KAWALAN SEMPADAN NEGARA") : (st.db.settings.title_pengakuan_standard || "PENGAKUAN TUNTUTAN ELAUN ANGGOTA RELA BAGI PENUGASAN DI PEJABAT {loc}").replace(/{loc}/gi, combinedGroupTitle);
+          
+          doc = new jsPDF('l', 'mm', 'a4');
+          doc.setLineWidth(0.5).setDrawColor(0, 0, 0).rect(10, 10, 277, 190).rect(11, 11, 275, 188);
+          doc.setFont('helvetica', 'bold').setFontSize(11);
+          
+          const splitTitle = doc.splitTextToSize(titleText.toUpperCase(), 240);
+          doc.text(splitTitle, 148.5, 25, { align: 'center' });
+          
+          let nextY = 25 + (splitTitle.length * 6) + 4;
+          doc.setFontSize(11)
+            .text('JABATAN', 20, nextY).text(':  SUKARELAWAN MALAYSIA (RELA)', 53, nextY)
+            .text('NEGERI', 20, nextY + 8).text(':  JOHOR', 53, nextY + 8)
+            .text('DAERAH', 20, nextY + 16).text(`:  ${st.db.settings.report_daerah || 'RELA DAERAH BATU PAHAT'}`, 53, nextY + 16)
+            .text('BULAN', 20, nextY + 24).text(`:  ${reportTitleDate}`, 53, nextY + 24)
+            .text('PENGESAHAN :', 20, nextY + 45);
+          
+          doc.setFont('helvetica', 'normal').text('Dengan ini disahkan bahawa anggota seperti senarai nama di atas telah bertugas pada tarikh and waktu', 53, nextY + 45);
+          
+          const phrase = 'sepertimana yang dinyatakan and tuntutan mereka adalah benar yang ';
+          doc.text(phrase, 53, nextY + 52);
+          
+          const phraseWidth = doc.getTextWidth(phrase);
+          doc.setFont('helvetica', 'bold').text(` RM ${formatRM(tA)}`, 53 + phraseWidth, nextY + 52);
+          
+          doc.setFont('helvetica', 'bold').setFontSize(10)
+            .text('DISEDIAKAN OLEH :', 20, nextY + 63)
+            .text('DISEMAK OLEH :', 20, nextY + 91)
+            .text('DISAHKAN OLEH :', 20, nextY + 119);
+          
+          doc.setLineWidth(0.5).line(20, nextY + 73, 90, nextY + 73);
+          doc.setFont('helvetica', 'normal').text('TARIKH :', 195, nextY + 73).line(215, nextY + 73, 265, nextY + 73);
+          doc.setFontSize(8).setFont('helvetica', 'bold').text('COP TANDATANGAN', 20, nextY + 77)
+            .text(st.db.settings.report_disediakan || 'PEMBANTU TADBIR', 20, nextY + 82, { maxWidth: 100 });
+          
+          doc.setFont('helvetica', 'normal').setFontSize(10); doc.line(20, nextY + 101, 90, nextY + 101); doc.text('TARIKH :', 195, nextY + 101);
+          doc.line(215, nextY + 101, 265, nextY + 101); doc.setFontSize(8).setFont('helvetica', 'bold').text('COP TANDATANGAN', 20, nextY + 105);
+          doc.text(st.db.settings.report_disemak || 'PEGAWAI RELA DAERAH', 20, nextY + 110, { maxWidth: 100 });
+          
+          doc.setFont('helvetica', 'normal').setFontSize(10); doc.line(20, nextY + 129, 90, nextY + 129); doc.text('TARIKH :', 195, nextY + 129);
+          doc.line(215, nextY + 129, 265, nextY + 129); doc.setFontSize(8).setFont('helvetica', 'bold').text('COP TANDATANGAN', 20, nextY + 133);
+          doc.text(st.db.settings.report_disahkan || 'PENGARAH RELA NEGERI', 20, nextY + 138, { maxWidth: 100 });
+        }
+        
+        // --- MODUL: RUMUSAN BANK STANDARD ---
+        else if (type === 'BANK') {
+          finalFilename = `Rumusan_Bank_${cleanedLocName}_${cleanedMonthName}_${st.year}.pdf`;
+          let activeMems = mems.filter((m) => calcMemberStats(m.id, st).hrs > 0);
+          let grandTotalAllowance = 0, grandTotalIncentive = 0;
+          doc = new jsPDF('l', 'mm', 'a4');
+          
+          let titleText = anyNbc ? (st.db.settings.title_bank_nbc || "RUMUSAN KENYATAAN MAKLUMAT TUNTUTAN ELAUN SERTA INSENTIF ANGGOTA DALAM PENUGASAN KOLABORASI RELA - PGA BAGI KAWALAN SEMPADAN NEGARA") : (st.db.settings.title_bank_standard || "RUMUSAN KENYATAAN MAKLUMAT AKAUN BANK ANGGOTA RELA YANG BERTUGAS").replace(/{loc}/gi, locNameDisplay);
+          doc.setFont('helvetica', 'bold').setFontSize(10);
+          
+          const splitTitle = doc.splitTextToSize(titleText.toUpperCase(), 260);
+          doc.text(splitTitle, 148.5, 20, { align: 'center' });
+          
+          const titleYEnd = 20 + (splitTitle.length * 5);
+          doc.text(`BAGI BULAN : ${reportTitleDate}`, 148.5, titleYEnd, { align: 'center' });
+          
+          const titleLinesOffset = (splitTitle.length * 5) + 6;
+          doc.setFontSize(10)
+            .text('TEMPAT PENUGASAN', 15, 28 + titleLinesOffset)
+            .text(`:  ${locNameDisplay.toUpperCase()}`, 58, 28 + titleLinesOffset)
+            .text('DAERAH', 15, 34 + titleLinesOffset)
+            .text(":  " + (st.db.settings.report_daerah || 'RELA DAERAH'), 58, 34 + titleLinesOffset);
+          
+          let bodyRows = activeMems.map((m, i) => {
+            const s = calcMemberStats(m.id, st);
+            grandTotalAllowance += s.allowance;
+            grandTotalIncentive += s.incentive;
+            let row = [i + 1, m.akaun || '', m.nama.toUpperCase(), `RM${formatRM(s.allowance)}`];
+            if (anyNbc) {
+              row.push(`RM${formatRM(s.incentive)}`);
+            }
+            row.push((m.bank || '').toUpperCase(), m.kp || '', m.tel || '');
+            return row;
+          });
+          
+          let totalRow = [{ content: 'JUMLAH', colSpan: 3, styles: { halign: 'center' } }, `RM${formatRM(grandTotalAllowance)}`];
+          if (anyNbc) {
+            totalRow.push(`RM${formatRM(grandTotalIncentive)}`);
+            totalRow.push({ content: `TOTAL BERSIH: RM${formatRM(grandTotalAllowance + grandTotalIncentive)}`, colSpan: 3, styles: { halign: 'center', fontStyle: 'bold' } });
+          } else {
+            totalRow.push({ content: '', colSpan: 3 });
+          }
+          bodyRows.push(totalRow);
+          
+          let headers = ['BIL', 'NO AKAUN BANK', 'NAMA PEMEGANG AKAUN', 'JUMLAH ELAUN (RM)'];
+          if (anyNbc) {
+            headers.push('JUMLAH INSENTIF (RM)');
+          }
+          headers.push('BANK', 'NO. KAD PENGENALAN', 'NO. TELEFON');
+          
+          let colStyles = { 0: { cellWidth: 12 }, 1: { cellWidth: 35 }, 2: { halign: 'left', cellWidth: 65 }, 3: { halign: 'center', fontStyle: 'bold', cellWidth: 35 }, 4: { cellWidth: 25 }, 5: { cellWidth: 35 }, 6: { cellWidth: 30 } };
+          if (anyNbc) {
+            colStyles = { 0: { cellWidth: 10 }, 1: { cellWidth: 32 }, 2: { halign: 'left', cellWidth: 55 }, 3: { halign: 'center', fontStyle: 'bold', cellWidth: 28 }, 4: { halign: 'center', fontStyle: 'bold', cellWidth: 28 }, 5: { cellWidth: 22 }, 6: { cellWidth: 32 }, 7: { cellWidth: 25 } };
+          }
+          
+          const tableStartY = 38 + titleLinesOffset;
+          const tableWidth = anyNbc ? 232 : 237;
+          const marginLeft = (297 - tableWidth) / 2;
+          
+          doc.autoTable({
+            startY: tableStartY,
+            head: [headers],
+            body: bodyRows,
+            theme: 'grid',
+            tableWidth: tableWidth,
+            margin: { left: marginLeft },
+            styles: { fontSize: 8, cellPadding: 2, textColor: [0, 0, 0], halign: 'center', valign: 'middle', lineColor: [0,0,0], lineWidth: 0.1 },
+            columnStyles: colStyles,
+            headStyles: { fillColor: [241, 245, 249], textColor: [0, 0, 0], fontStyle: 'bold', halign: 'center', valign: 'middle' },
+            didParseCell: function (data) {
+              if (data.section === 'body' && data.row.index === data.table.body.length - 1) {
+                data.cell.styles.fontStyle = 'bold';
+                data.cell.styles.fillColor = [226, 232, 240];
+                data.cell.styles.textColor = [15, 23, 42];
+              }
+            }
+          });
+          
+          let finalY = doc.lastAutoTable.finalY + 8;
+          doc.setFont('helvetica', 'italic').setFontSize(8).setTextColor(100, 116, 139).text('*Sila sertakan salinan muka surat hadapan akaun bank anggota bagi pengesahan manual.', 15, finalY);
+          
+          let signatureY = finalY + 15;
+          if (signatureY + 35 > 200) {
+            doc.addPage();
+            signatureY = 25;
+          }
+          
+          doc.setFont('helvetica', 'bold').setFontSize(9).setTextColor(0, 0, 0)
+            .text('DISEDIAKAN OLEH :', 45, signatureY, { align: 'center' })
+            .text('DISEMAK OLEH :', 148.5, signatureY, { align: 'center' })
+            .text('DISAHKAN OLEH :', 252, signatureY, { align: 'center' });
+          
+          doc.setFont('helvetica', 'normal').setFontSize(8)
+            .text(st.db.settings.report_disediakan || 'COP (PEMBANTU TADBIR)', 45, signatureY + 18, { align: 'center', maxWidth: 65 })
+            .text(st.db.settings.report_disemak || 'COP (PEGAWAI RELA DAERAH)', 148.5, signatureY + 18, { align: 'center', maxWidth: 65 })
+            .text(st.db.settings.report_disahkan || 'COP (PENGARAH RELA NEGERI)', 252, signatureY + 18, { align: 'center', maxWidth: 65 });
+          
+          doc.setFontSize(9)
+            .text('TARIKH :', 20, signatureY + 28).line(36, signatureY + 28, 76, signatureY + 28)
+            .text('TARIKH :', 123, signatureY + 28).line(139, signatureY + 28, 179, signatureY + 28)
+            .text('TARIKH :', 227, signatureY + 28).line(243, signatureY + 28, 283, signatureY + 28);
+        }
+        
+        // --- MODUL: JADUAL ROSTER ---
+        else if (type === 'JADUAL') {
+          finalFilename = `Jadual_Roster_${cleanedLocName}_${cleanedMonthName}_${st.year}.pdf`;
+          doc = new jsPDF('l', 'mm', 'a4'); 
+          doc.setFont('helvetica', 'bold').setFontSize(10); 
+          doc.text('JADUAL (ROSTER)', 280, 15, { align: 'right' });
+          doc.setFontSize(12).text(`JADUAL PENUGASAN DI ${locNameDisplay}`, 148.5, 25, { align: 'center' }).text(`BAGI BULAN: ${M_NAMES[st.month-1].toUpperCase()} ${st.year}`, 148.5, 31, { align: 'center' });
+          
+          let headRow = ['BIL', 'NAMA PENUH', 'PANGKAT']; 
+          for(let d=1; d<=maxD; d++) headRow.push(d.toString());
+          
+          let bodyRows = mems.map((m, i) => { 
+            let row = [i+1, m.nama, m.pangkat]; 
+            for(let d=1; d<=maxD; d++) { 
+              let v = st.db.roster[`${m.locId}-${m.id}-${st.year}-${st.month}-${d}`] || ''; 
+              if(v === 'PAGI') v = 'P'; 
+              else if(v === 'PETANG') v = 'PT'; 
+              else if(v === 'MALAM') v = 'M'; 
+              else if(v === 'OFF' || v === 'CUTI' || v === 'X') v = 'O'; 
+              row.push(v); 
+            } 
+            return row; 
+          });
+          
+          doc.autoTable({ 
+            startY: 40, 
+            head: [headRow], 
+            body: bodyRows, 
+            theme: 'grid', 
+            styles: { fontSize: 6, cellPadding: 1, halign: 'center', valign: 'middle', lineColor: [0,0,0], lineWidth: 0.1 }, 
+            columnStyles: { 1: { halign: 'left', cellWidth: 40 }, 2: { cellWidth: 15 } }, 
+            headStyles: { fillColor: [241, 245, 249], textColor: [0, 0, 0] } 
+          });
+          
+          const finalY = doc.lastAutoTable.finalY + 15; 
+          doc.setFontSize(9).text('DISEDIAKAN OLEH:', 20, finalY).line(20, finalY + 15, 80, finalY + 15).text(`(${st.db.settings.report_disediakan || 'PEMBANTU TADBIR'})`, 50, finalY + 20, {align: 'center'});
+        }
+
+        const pdfDataUri = doc.output('datauristring');
+        const reportTitle = `${type === 'B' ? 'Rumusan PTJ RELA' : type === 'BANK' ? 'Rumusan Bank' : type === 'PENGAKUAN' ? 'Pengakuan' : 'Jadual Roster'}`;
+        
+        pdfGeneratedData = {
+          uri: pdfDataUri,
+          filename: finalFilename,
+          title: reportTitle
+        };
+        attemptSend();
+      } catch(e) {
+        console.error(e);
+        alertMsg('Gagal menjana laporan. Sila cuba lagi.', 'error');
+        window.removeEventListener('message', handleHandshake);
+        showLoading(false);
+      }
+    }, 50);
+  }
+
+  // ==============================================================
+  // ENJIN JANAAN EXCEL UNTUK SEMUA LAPORAN
+  // ==============================================================
+
+  // 1. Lampiran B Excel (Format Baharu Mengikut Tangkap Layar Rasmi)
+  function generateLampiranBExcel(st) {
+    showLoading(true);
+    setTimeout(() => {
+      try {
+        const maxD = new Date(st.year, st.month, 0).getDate();
+        let reportLocIds = [];
+        if (st.locId === 'all') {
+          if (st.role === 'admin') reportLocIds = st.db.locations.map(l => l.id);
+          else reportLocIds = st.allowedLocs.split(',');
+        } else {
+          reportLocIds = [st.locId];
+        }
+
+        const mems = st.db.members.filter(m => reportLocIds.includes(m.locId));
+        let activeMems = mems.filter((m) => calcMemberStats(m.id, st).hrs > 0);
+        const enabledNbcLocs = (st.db.settings.nbc_enabled_locations || '').split(',');
+
+        let locNameDisplay = reportLocIds.length === 1 
+          ? (st.db.locations.find(l => l.id === reportLocIds[0])?.name || "LOKASI").toUpperCase() 
+          : `KUMULATIF LOKASI`;
+
+        const daerahText = (st.db.settings.report_daerah || 'BATU PAHAT').toUpperCase();
+        const bulanNama = M_NAMES[st.month - 1].toUpperCase();
+
+        let aoa = [];
+        // Pengepala Utama Format Baharu
+        aoa.push(['RUMUSAN TUNTUTAN PEMBAYARAN PTJ RELA']);
+        aoa.push(['JABATAN SUKARELAWAN MALAYSIA (RELA)']);
+        aoa.push([`LOKASI PENUGASAN: ${locNameDisplay}`]);
+        aoa.push([`DAERAH: ${daerahText} NEGERI: JOHOR BULAN: ${bulanNama} TAHUN: ${st.year}`]);
+        aoa.push([]);
+
+        // Pengepala Baris 1
+        let h1 = ['BIL', 'NAMA PETUGAS'];
+        h1.push(`TARIKH DAN JUMLAH JAM BERTUGAS (8JAM = 8) (TIDAK BERTUGAS = 0)`);
+        for (let d = 2; d <= maxD; d++) h1.push('');
+        h1.push('BIL. HARI', 'BIL. JAM', 'KADAR TUNTUTAN SEJAM (RM)', 'JUMLAH ELAUN (RM)', 'JUMLAH INSENTIF (RM)', 'JUMLAH SME (RM)', 'JUMLAH (RM)');
+        aoa.push(h1);
+
+        // Pengepala Baris 2 (Nombor Hari 1 - 31)
+        let h2 = ['', ''];
+        for (let d = 1; d <= maxD; d++) h2.push(d.toString());
+        h2.push('', '', '', '', '', '', '');
+        aoa.push(h2);
+
+        let grandDays = 0, grandHrs = 0, grandElaun = 0, grandInc = 0, grandSme = 0;
+        let dailyActiveHours = Array(maxD).fill(0);
+        let rNum = 1;
+
+        activeMems.forEach(m => {
+          const stats = calcMemberStats(m.id, st);
+          const isNbc = enabledNbcLocs.includes(m.locId);
+          const isSme = String(m.sme || '').toUpperCase() === 'YA';
+          const incAmount = isNbc ? (stats.incentive || 0) : 0;
+          const smeAmount = isSme ? (stats.smeAmount || 0) : 0;
+          const totalMember = stats.allowance + incAmount + smeAmount;
+
+          let dailyHours = [];
+          for (let d = 1; d <= maxD; d++) {
+            const k = `${m.locId}-${m.id}-${st.year}-${st.month}-${d}`;
+            const v = st.db.attendance[k] || 'X';
+            const h = parseFloat(v);
+            if (v !== 'X' && !isNaN(h) && h > 0) {
+              dailyHours.push(h);
+              dailyActiveHours[d - 1] += h;
+            } else {
+              dailyHours.push('X');
+            }
+          }
+
+          let row = [
+            rNum++,
+            m.nama.toUpperCase(),
+            ...dailyHours,
+            stats.dys,
+            stats.hrs,
+            (parseFloat(m.kadar) || 8).toFixed(2),
+            formatRM(stats.allowance),
+            formatRM(incAmount),
+            formatRM(smeAmount),
+            formatRM(totalMember)
+          ];
+
+          aoa.push(row);
+          grandDays += stats.dys;
+          grandHrs += stats.hrs;
+          grandElaun += stats.allowance;
+          grandInc += incAmount;
+          grandSme += smeAmount;
+        });
+
+        // Baris JUMLAH JAM SEHARI
+        let rowJamSehari = ['JUMLAH JAM SEHARI', ''];
+        for (let d = 1; d <= maxD; d++) {
+          rowJamSehari.push(dailyActiveHours[d - 1]);
+        }
+        rowJamSehari.push('', 'JUMLAH', '', formatRM(grandElaun), formatRM(grandInc), formatRM(grandSme), '');
+        aoa.push(rowJamSehari);
+
+        // Baris JUMLAH KESELURUHAN (DIPUSATKAN MERENTASI RUANG TUNTUTAN)
+        const grandTotalAll = grandElaun + grandInc + grandSme;
+        let rowKeseluruhan = ['JUMLAH KESELURUHAN'];
+        for (let i = 1; i <= maxD + 4; i++) rowKeseluruhan.push('');
+        rowKeseluruhan.push(`RM ${formatRM(grandTotalAll)}`);
+        rowKeseluruhan.push('');
+        rowKeseluruhan.push('');
+        rowKeseluruhan.push('');
+        aoa.push(rowKeseluruhan);
+
+        aoa.push([]);
+        aoa.push(['NOTA: Senarai bilangan Petugas dan tarikh boleh dipinda manakala format asal perlu dikekalkan. Sila garis/ palang ruangan yang tidak berkenaan']);
+        aoa.push([]);
+
+        // Blok Tandatangan Bawah
+        aoa.push(['DISEDIAKAN OLEH (PT/PPRD ):', '', '', '', '', '', '', '', '', '', 'DISEMAK OLEH (PRD/PPRD):', '', '', '', '', '', '', '', '', '', 'DILULUSKAN OLEH (PRN/KOMANDAN/PO/EO):']);
+        aoa.push([]);
+        aoa.push(['TANDATANGAN:', '', '', '', '', '', '', '', '', '', 'TANDATANGAN:', '', '', '', '', '', '', '', '', '', 'TANDATANGAN:']);
+        aoa.push(['NAMA:', '', '', '', '', '', '', '', '', '', 'NAMA:', '', '', '', '', '', '', '', '', '', 'NAMA :']);
+        aoa.push(['JAWATAN:', '', '', '', '', '', '', '', '', '', 'JAWATAN:', '', '', '', '', '', '', '', '', '', 'JAWATAN:']);
+        aoa.push(['TARIKH:', '', '', '', '', '', '', '', '', '', 'TARIKH:', '', '', '', '', '', '', '', '', '', 'TARIKH:']);
+
+        const ws = XLSX.utils.aoa_to_sheet(aoa);
+
+        // Merge cells untuk tajuk utama dan sub-header
+        ws['!merges'] = [
+          { s: { r: 0, c: 0 }, e: { r: 0, c: maxD + 8 } },
+          { s: { r: 1, c: 0 }, e: { r: 1, c: maxD + 8 } },
+          { s: { r: 2, c: 0 }, e: { r: 2, c: maxD + 8 } },
+          { s: { r: 3, c: 0 }, e: { r: 3, c: maxD + 8 } },
+          { s: { r: 5, c: 0 }, e: { r: 6, c: 0 } }, // BIL
+          { s: { r: 5, c: 1 }, e: { r: 6, c: 1 } }, // NAMA PETUGAS
+          { s: { r: 5, c: 2 }, e: { r: 5, c: maxD + 1 } }, // TARIKH & JAM (1-31)
+          { s: { r: 5, c: maxD + 2 }, e: { r: 6, c: maxD + 2 } }, // BIL. HARI
+          { s: { r: 5, c: maxD + 3 }, e: { r: 6, c: maxD + 3 } }, // BIL. JAM
+          { s: { r: 5, c: maxD + 4 }, e: { r: 6, c: maxD + 4 } }, // KADAR TUNTUTAN SEJAM
+          { s: { r: 5, c: maxD + 5 }, e: { r: 6, c: maxD + 5 } }, // JUMLAH ELAUN
+          { s: { r: 5, c: maxD + 6 }, e: { r: 6, c: maxD + 6 } }, // JUMLAH INSENTIF
+          { s: { r: 5, c: maxD + 7 }, e: { r: 6, c: maxD + 7 } }, // JUMLAH SME
+          { s: { r: 5, c: maxD + 8 }, e: { r: 6, c: maxD + 8 } }, // JUMLAH
+          { s: { r: 7 + activeMems.length, c: 0 }, e: { r: 7 + activeMems.length, c: 1 } }, // JUMLAH JAM SEHARI
+          { s: { r: 8 + activeMems.length, c: 0 }, e: { r: 8 + activeMems.length, c: maxD + 4 } }, // JUMLAH KESELURUHAN label
+          { s: { r: 8 + activeMems.length, c: maxD + 5 }, e: { r: 8 + activeMems.length, c: maxD + 8 } } // JUMLAH KESELURUHAN amount (4 lajur)
+        ];
+
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "Rumusan PTJ RELA");
+
+        const filename = `Rumusan_Tuntutan_PTJ_${locNameDisplay.replace(/[^A-Z0-9]/gi, '_')}_${M_SHORT[st.month-1]}_${st.year}.xlsx`;
+        XLSX.writeFile(wb, filename);
+
+        showLoading(false);
+        alertMsg('Fail Excel Rumusan PTJ RELA berjaya dimuat turun!');
+      } catch (e) {
+        console.error(e);
+        showLoading(false);
+        alertMsg('Gagal menjana Excel Lampiran B format baharu.', 'error');
+      }
+    }, 50);
+  }
+
+  // 2. Rumusan Bank Excel
+  function generateRumusanBankExcel(st) {
+    showLoading(true);
+    setTimeout(() => {
+      try {
+        let reportLocIds = [];
+        if (st.locId === 'all') {
+          if (st.role === 'admin') reportLocIds = st.db.locations.map(l => l.id);
+          else reportLocIds = st.allowedLocs.split(',');
+        } else {
+          reportLocIds = [st.locId];
+        }
+
+        const mems = st.db.members.filter(m => reportLocIds.includes(m.locId));
+        let activeMems = mems.filter((m) => calcMemberStats(m.id, st).hrs > 0);
+        const enabledNbcLocs = (st.db.settings.nbc_enabled_locations || '').split(',');
+        const anyNbc = reportLocIds.some(id => enabledNbcLocs.includes(id));
+
+        let aoa = [];
+        aoa.push(['RUMUSAN KENYATAAN MAKLUMAT AKAUN BANK ANGGOTA RELA']);
+        aoa.push([`BAGI BULAN: ${M_NAMES[st.month-1].toUpperCase()} ${st.year}`]);
+        aoa.push([]);
+
+        let header = ['BIL', 'NO AKAUN BANK', 'NAMA PEMEGANG AKAUN', 'JUMLAH ELAUN (RM)'];
+        if (anyNbc) header.push('JUMLAH INSENTIF (RM)');
+        header.push('BANK', 'NO. KAD PENGENALAN', 'NO. TELEFON');
+        aoa.push(header);
+
+        let grandElaun = 0, grandInc = 0;
+        activeMems.forEach((m, idx) => {
+          const s = calcMemberStats(m.id, st);
+          grandElaun += s.allowance;
+          grandInc += s.incentive;
+
+          let row = [
+            idx + 1,
+            { v: String(m.akaun || '').replace(/'/g, '').trim(), t: 's' },
+            (m.nama || '').toUpperCase(),
+            formatRM(s.allowance)
+          ];
+          if (anyNbc) row.push(formatRM(s.incentive));
+          row.push((m.bank || '').toUpperCase());
+          row.push({ v: String(m.kp || '').replace(/'/g, '').trim(), t: 's' });
+          row.push({ v: String(m.tel || '').replace(/'/g, '').trim(), t: 's' });
+          aoa.push(row);
+        });
+
+        let totalRow = ['JUMLAH', '', '', formatRM(grandElaun)];
+        if (anyNbc) totalRow.push(formatRM(grandInc));
+        totalRow.push('', '', '');
+        aoa.push(totalRow);
+
+        const ws = XLSX.utils.aoa_to_sheet(aoa);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "Rumusan Bank");
+
+        let locName = st.locId === 'all' ? 'SEMUA_LOKASI' : (st.db.locations.find(l => l.id === st.locId)?.short || st.locId);
+        const filename = `Rumusan_Bank_${locName}_${M_SHORT[st.month-1]}_${st.year}.xlsx`;
+        XLSX.writeFile(wb, filename);
+
+        showLoading(false);
+        alertMsg('Fail Excel Rumusan Bank berjaya dimuat turun!');
+      } catch (e) {
+        console.error(e);
+        showLoading(false);
+        alertMsg('Gagal menjana fail Excel Rumusan Bank.', 'error');
+      }
+    }, 50);
+  }
+
+  // 3. Pengakuan Tuntutan Excel
+  function generatePengakuanExcel(st) {
+    showLoading(true);
+    setTimeout(() => {
+      try {
+        let reportLocIds = [];
+        if (st.locId === 'all') {
+          if (st.role === 'admin') reportLocIds = st.db.locations.map(l => l.id);
+          else reportLocIds = st.allowedLocs.split(',');
+        } else {
+          reportLocIds = [st.locId];
+        }
+
+        const mems = st.db.members.filter(m => reportLocIds.includes(m.locId));
+        let activeMems = mems.filter((m) => calcMemberStats(m.id, st).hrs > 0);
+        let tA = 0;
+        activeMems.forEach(m => tA += calcMemberStats(m.id, st).total);
+
+        let aoa = [];
+        aoa.push(['PENGAKUAN TUNTUTAN ELAUN ANGGOTA RELA']);
+        aoa.push([`JABATAN: SUKARELAWAN MALAYSIA (RELA)`]);
+        aoa.push([`NEGERI: JOHOR`]);
+        aoa.push([`DAERAH: ${(st.db.settings.report_daerah || 'RELA DAERAH BATU PAHAT').toUpperCase()}`]);
+        aoa.push([`BULAN: ${M_NAMES[st.month-1].toUpperCase()} ${st.year}`]);
+        aoa.push([]);
+        aoa.push(['Dengan ini disahkan bahawa anggota seperti senarai nama di bawah telah bertugas dan tuntutan mereka adalah benar berjumlah:', `RM ${formatRM(tA)}`]);
+        aoa.push([]);
+
+        aoa.push(['BIL', 'NAMA PETUGAS', 'NO. KP', 'PANGKAT', 'JUMLAH TUNTUTAN (RM)']);
+        activeMems.forEach((m, idx) => {
+          const s = calcMemberStats(m.id, st);
+          aoa.push([
+            idx + 1,
+            m.nama.toUpperCase(),
+            { v: String(m.kp || '').replace(/'/g, '').trim(), t: 's' },
+            m.pangkat,
+            formatRM(s.total)
+          ]);
+        });
+
+        aoa.push(['JUMLAH KESELURUHAN', '', '', '', formatRM(tA)]);
+
+        const ws = XLSX.utils.aoa_to_sheet(aoa);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "Pengakuan");
+
+        let locName = st.locId === 'all' ? 'SEMUA_LOKASI' : (st.db.locations.find(l => l.id === st.locId)?.short || st.locId);
+        const filename = `Pengakuan_Tuntutan_${locName}_${M_SHORT[st.month-1]}_${st.year}.xlsx`;
+        XLSX.writeFile(wb, filename);
+
+        showLoading(false);
+        alertMsg('Fail Excel Pengakuan berjaya dimuat turun!');
+      } catch (e) {
+        console.error(e);
+        showLoading(false);
+        alertMsg('Gagal menjana fail Excel Pengakuan.', 'error');
+      }
+    }, 50);
+  }
+
+  // 4. Jadual Roster Excel
+  function generateJadualRosterExcel(st) {
+    showLoading(true);
+    setTimeout(() => {
+      try {
+        const maxD = new Date(st.year, st.month, 0).getDate();
+        let reportLocIds = [];
+        if (st.locId === 'all') {
+          if (st.role === 'admin') reportLocIds = st.db.locations.map(l => l.id);
+          else reportLocIds = st.allowedLocs.split(',');
+        } else {
+          reportLocIds = [st.locId];
+        }
+
+        const mems = st.db.members.filter(m => reportLocIds.includes(m.locId));
+
+        let aoa = [];
+        aoa.push(['JADUAL PENUGASAN (ROSTER)']);
+        aoa.push([`BULAN: ${M_NAMES[st.month-1].toUpperCase()} ${st.year}`]);
+        aoa.push([]);
+
+        let header = ['BIL', 'NAMA PETUGAS', 'NO KP', 'PANGKAT'];
+        for (let d = 1; d <= maxD; d++) header.push(d.toString());
+        aoa.push(header);
+
+        mems.forEach((m, idx) => {
+          let row = [
+            idx + 1,
+            m.nama.toUpperCase(),
+            { v: String(m.kp || '').replace(/'/g, '').trim(), t: 's' },
+            m.pangkat
+          ];
+          for (let d = 1; d <= maxD; d++) {
+            let v = st.db.roster[`${m.locId}-${m.id}-${st.year}-${st.month}-${d}`] || '';
+            if (v === 'PAGI') v = 'P';
+            else if (v === 'PETANG') v = 'PT';
+            else if (v === 'MALAM') v = 'M';
+            else if (v === 'OFF' || v === 'CUTI' || v === 'X') v = 'O';
+            row.push(v);
+          }
+          aoa.push(row);
+        });
+
+        const ws = XLSX.utils.aoa_to_sheet(aoa);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "Jadual Roster");
+
+        let locName = st.locId === 'all' ? 'SEMUA_LOKASI' : (st.db.locations.find(l => l.id === st.locId)?.short || st.locId);
+        const filename = `Jadual_Roster_${locName}_${M_SHORT[st.month-1]}_${st.year}.xlsx`;
+        XLSX.writeFile(wb, filename);
+
+        showLoading(false);
+        alertMsg('Fail Excel Jadual Roster berjaya dimuat turun!');
+      } catch (e) {
+        console.error(e);
+        showLoading(false);
+        alertMsg('Gagal menjana fail Excel Jadual Roster.', 'error');
+      }
+    }, 50);
+  }
+
+  // =========================================================================================
+  // --- FUNGSI KHAS: JANAAN PDF LAMPIRAN AFFIN (DISEBELAH TENGAH & TIADA RUANG TANDATANGAN) ---
+  // =========================================================================================
+  function generateAffinPDF(st, previewUrl) {
+    const previewWin = window.open(previewUrl, '_blank');
+    if (!previewWin) {
+      return alertMsg('Sekatan Pelayar dikesan! Sila benarkan tetingkap timbul bagi melihat laporan.', 'warning');
+    }
+    showLoading(true);
+    let pdfGeneratedData = null;
+    let isPreviewReady = false;
+    if (window.currentPdfHandshake) {
+      window.removeEventListener('message', window.currentPdfHandshake);
+      window.currentPdfHandshake = null;
+    }
+    const handleHandshake = (event) => {
+      try {
+        const expectedOrigin = new URL(previewUrl).origin;
+        if (event.origin !== expectedOrigin) return;
+      } catch (err) {
+        return;
+      }
+      
+      if (event.data && event.data.type === 'PREVIEW_READY') {
+        isPreviewReady = true;
+        attemptSend();
+      }
+    };
+    window.currentPdfHandshake = handleHandshake;
+    window.addEventListener('message', handleHandshake);
+    function attemptSend() {
+      if (isPreviewReady && pdfGeneratedData) {
+        const targetOrigin = new URL(previewUrl).origin;
+        previewWin.postMessage({
+          type: 'PDF_DATA',
+          data: pdfGeneratedData.uri,
+          filename: pdfGeneratedData.filename,
+          title: 'Lampiran AFFIN'
+        }, targetOrigin);
+        
+        window.removeEventListener('message', handleHandshake);
+        window.currentPdfHandshake = null;
+        showLoading(false);
+      }
+    }
+    setTimeout(() => {
+      try {
+        const { jsPDF } = window.jspdf;
+        const maxD = new Date(st.year, st.month, 0).getDate();
+        
+        let reportLocIds = [];
+        if (st.locId === 'all') {
+          if (st.role === 'admin') {
+            reportLocIds = st.db.locations.map(l => l.id);
+          } else {
+            reportLocIds = st.allowedLocs.split(',');
+          }
+        } else {
+          reportLocIds = [st.locId];
+        }
+        
+        const mems = st.db.members.filter(m => reportLocIds.includes(m.locId));
+        let locNameDisplay = "";
+        
+        if (reportLocIds.length === 1) {
+          const lObj = st.db.locations.find(l => l.id === reportLocIds[0]);
+          locNameDisplay = lObj ? lObj.name.toUpperCase() : "LOKASI TIDAK DIKETAHUI";
+        } else {
+          const names = reportLocIds.map(id => st.db.locations.find(x => x.id === id)?.short || id);
+          locNameDisplay = `KUMULATIF LOKASI (${names.join(', ')})`;
+        }
+        const cleanedLocName = locNameDisplay.toUpperCase().replace(/[^A-Z0-9]/gi, '_');
+        const cleanedMonthName = M_SHORT[st.month-1];
+        const finalFilename = `Lampiran_AFFIN_${cleanedLocName}_${cleanedMonthName}_${st.year}.pdf`;
+        
+        const doc = new jsPDF('l', 'mm', 'a4');
+        doc.setFont('helvetica', 'bold').setFontSize(10);
+        doc.text('CORPORATE IBG BATCH TRANSFER (AFFIN BANK)', 15, 15);
+        
+        doc.setFontSize(8).setFont('helvetica', 'normal');
+        doc.text('Template Type', 15, 22);
+        doc.setFont('helvetica', 'bold');
+        doc.text(': Corporate IBG', 45, 22);
+        
+        doc.setFont('helvetica', 'normal');
+        doc.text('Sektor/Tempat', 15, 27);
+        doc.setFont('helvetica', 'bold');
+        doc.text(`: ${locNameDisplay}`, 45, 27);
+        
+        doc.setFont('helvetica', 'normal');
+        doc.text('Sasaran Dana', 15, 32);
+        doc.setFont('helvetica', 'bold');
+        doc.text(`: 01 HINGGA ${maxD} ${M_NAMES[st.month-1].toUpperCase()} ${st.year}`, 45, 32);
+        let activeMems = mems.filter((m) => calcMemberStats(m.id, st).hrs > 0);
+        let grandTotalIBG = 0;
+        
+        let bodyRows = activeMems.map((m) => {
+          const s = calcMemberStats(m.id, st);
+          const totalDana = s.total;
+          grandTotalIBG += totalDana;
+          
+          const accNo = String(m.akaun || '').replace(/'/g, '');
+          const idNo = String(m.kp || '').replace(/'/g, '');
+          const bName = (m.nama || '').toUpperCase();
+          const bankName = (m.bank || '').toUpperCase();
+          const idType = 'NEW IC NUMBER';
+          const recRef = '';
+          const otherDetails = `ELAUN ${M_SHORT[st.month-1]} ${st.year}`;
+          
+          return [
+            accNo,
+            bName,
+            `RM${formatRM(totalDana)}`,
+            bankName,
+            idType,
+            idNo,
+            recRef,
+            otherDetails
+          ];
+        });
+        
+        bodyRows.push([
+          { content: 'JUMLAH KESELURUHAN (Corporate IBG)', colSpan: 2, styles: { halign: 'center', fontStyle: 'bold' } },
+          `RM${formatRM(grandTotalIBG)}`,
+          { content: '', colSpan: 5 }
+        ]);
+        let headers = ['ACC NO.', 'BENEFICIARY NAME', 'AMT', 'BANK', 'I/D TYPE', 'I/D NO', 'RECIPIENT REFERENCE', 'OTHER PAYMENT DETAILS'];
+        
+        doc.autoTable({
+          startY: 37,
+          head: [headers],
+          body: bodyRows,
+          theme: 'grid',
+          margin: { left: 16 },
+          styles: { fontSize: 8, cellPadding: 2.2, textColor: [0, 0, 0], halign: 'center', valign: 'middle', lineColor: [0,0,0], lineWidth: 0.1 },
+          columnStyles: {
+            0: { cellWidth: 32 },
+            1: { halign: 'left', cellWidth: 60 },
+            2: { halign: 'center', fontStyle: 'bold', cellWidth: 30 },
+            3: { cellWidth: 26 },
+            4: { cellWidth: 28 },
+            5: { cellWidth: 32 },
+            6: { cellWidth: 25 },
+            7: { cellWidth: 32 }
+          },
+          headStyles: { fillColor: [15, 23, 42], textColor: [255, 255, 255], fontStyle: 'bold', halign: 'center' },
+          didParseCell: function (data) {
+            if (data.section === 'body' && data.row.index === data.table.body.length - 1) {
+              data.cell.styles.fontStyle = 'bold';
+              data.cell.styles.fillColor = [226, 232, 240];
+              data.cell.styles.textColor = [15, 23, 42];
+            }
+          }
+        });
+        pdfGeneratedData = {
+          uri: doc.output('datauristring'),
+          filename: finalFilename,
+          title: 'Lampiran AFFIN'
+        };
+        attemptSend();
+      } catch(e) {
+        console.error(e);
+        alertMsg('Gagal menjana laporan PDF.', 'error');
+        window.removeEventListener('message', handleHandshake);
+        showLoading(false);
+      }
+    }, 50);
+  }
+
+  // =============================================================================================
+  // --- FUNGSI KHAS: JANAAN FAIL EXCEL TEMPLAT IBG (MENGEKALKAN FORMAT TEKS & SIFAR HADAPAN) ---
+  // =============================================================================================
+  function generateAffinExcel(st) {
+    showLoading(true);
+    setTimeout(() => {
+      try {
+        let reportLocIds = [];
+        if (st.locId === 'all') {
+          if (st.role === 'admin') {
+            reportLocIds = st.db.locations.map(l => l.id);
+          } else {
+            reportLocIds = st.allowedLocs.split(',');
+          }
+        } else {
+          reportLocIds = [st.locId];
+        }
+        
+        const mems = st.db.members.filter(m => reportLocIds.includes(m.locId));
+        let activeMems = mems.filter((m) => calcMemberStats(m.id, st).hrs > 0);
+        
+        let aoa = [];
+        aoa.push(['Template Type', 'Corporate IBG', '', '', '', '', '', '']);
+        aoa.push(['ACC NO.', 'BENEFICIARY NAME', 'AMT', 'BANK', 'I/D TYPE', 'I/D NO', 'RECIPIENT REFERENCE', 'OTHER PAYMENT DETAILS']);
+        
+        let grandTotalIBG = 0;
+        
+        activeMems.forEach((m) => {
+          const s = calcMemberStats(m.id, st);
+          const totalDana = s.total;
+          grandTotalIBG += totalDana;
+          const formattedDanaWithRM = `RM${formatRM(totalDana)}`;
+          
+          const accNo = String(m.akaun || '').replace(/'/g, '').trim();
+          const idNo = String(m.kp || '').replace(/'/g, '').trim();
+          const bName = (m.nama || '').toUpperCase().trim();
+          const bankName = (m.bank || '').toUpperCase().trim();
+          const idType = "NEW IC NUMBER";
+          const recRef = "";
+          const otherDetails = `ELAUN ${M_SHORT[st.month-1]} ${st.year}`;
+          
+          aoa.push([
+            { v: accNo, t: 's' },
+            bName,
+            formattedDanaWithRM,
+            bankName,
+            idType,
+            { v: idNo, t: 's' },
+            recRef,
+            otherDetails
+          ]);
+        });
+        
+        aoa.push(['JUMLAH KESELURUHAN (Corporate IBG)', '', `RM${formatRM(grandTotalIBG)}`, '', '', '', '', '']);
+        
+        const ws = XLSX.utils.aoa_to_sheet(aoa);
+        
+        ws['!merges'] = [
+          {s: {r: activeMems.length + 2, c: 0}, e: {r: activeMems.length + 2, c: 1}}
+        ];
+        
+        ws['!cols'] = [
+          {wch: 20},
+          {wch: 40},
+          {wch: 15},
+          {wch: 25},
+          {wch: 20},
+          {wch: 20},
+          {wch: 20},
+          {wch: 35}
+        ];
+        
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "Corporate IBG");
+        
+        let locName = st.locId === 'all' ? 'SEMUA_LOKASI' : (st.db.locations.find(l => l.id === st.locId)?.short || st.locId);
+        const cleanedLoc = locName.toUpperCase().replace(/[^A-Z0-9]/gi, '_');
+        const filename = `Corporate_IBG_AFFIN_${cleanedLoc}_${M_SHORT[st.month-1]}_${st.year}.xlsx`;
+        
+        XLSX.writeFile(wb, filename);
+        
+        showLoading(false);
+        alertMsg('Fail Excel AFFIN berjaya dimuat turun!');
+      } catch(e) {
+        console.error(e);
+        showLoading(false);
+        alertMsg('Gagal menjana fail Excel AFFIN.', 'error');
+      }
+    }, 50);
+  }
+
+  // =========================================================================================
+  // --- FUNGSI KHAS: JANAAN PDF BORANG TUNTUTAN ELAUN INDIVIDU (PORTRAIT & 1 PAGE FIXED) ---
+  // =========================================================================================
+  function generateIndividualTuntutanPDF(st, previewUrl, targetMemberId) {
+    const previewWin = window.open(previewUrl, '_blank');
+    if (!previewWin) {
+      return alertMsg('Sekatan Pelayar dikesan! Sila benarkan tetingkap timbul bagi melihat borang tuntutan.', 'warning');
+    }
+    showLoading(true);
+    let pdfGeneratedData = null;
+    let isPreviewReady = false;
+    if (window.currentPdfHandshake) {
+      window.removeEventListener('message', window.currentPdfHandshake);
+      window.currentPdfHandshake = null;
+    }
+    const handleHandshake = (event) => {
+      try {
+        const expectedOrigin = new URL(previewUrl).origin;
+        if (event.origin !== expectedOrigin) return;
+      } catch (err) {
+        return;
+      }
+      
+      if (event.data && event.data.type === 'PREVIEW_READY') {
+        isPreviewReady = true;
+        attemptSend();
+      }
+    };
+    window.currentPdfHandshake = handleHandshake;
+    window.addEventListener('message', handleHandshake);
+    function attemptSend() {
+      if (isPreviewReady && pdfGeneratedData) {
+        const targetOrigin = new URL(previewUrl).origin;
+        previewWin.postMessage({
+          type: 'PDF_DATA',
+          data: pdfGeneratedData.uri,
+          filename: pdfGeneratedData.filename,
+          title: 'Lampiran D'
+        }, targetOrigin);
+        
+        window.removeEventListener('message', handleHandshake);
+        window.currentPdfHandshake = null;
+        showLoading(false);
+      }
+    }
+    setTimeout(() => {
+      try {
+        const { jsPDF } = window.jspdf;
+        const maxD = new Date(st.year, st.month, 0).getDate();
+        
+        const monthIndex = parseInt(st.month || (new Date().getMonth() + 1)) - 1;
+        const cleanedMonthName = M_SHORT[monthIndex] || "BULAN";
+        
+        let reportLocIds = [];
+        if (st.locId === 'all') {
+          if (st.role === 'admin') {
+            reportLocIds = st.db.locations.map(l => l.id);
+          } else {
+            reportLocIds = st.allowedLocs.split(',');
+          }
+        } else {
+          reportLocIds = [st.locId];
+        }
+        let mems = st.db.members.filter(m => reportLocIds.includes(m.locId));
+        let printMems = [];
+        
+        if (targetMemberId === 'ALL') {
+          printMems = mems.filter((m) => calcMemberStats(m.id, st).hrs > 0);
+        } else {
+          const singleMem = mems.find(m => m.id === targetMemberId);
+          if (singleMem) printMems = [singleMem];
+        }
+        if (printMems.length === 0) {
+          showLoading(false);
+          if (previewWin) previewWin.close();
+          window.removeEventListener('message', handleHandshake);
+          return alertMsg('Tiada rekod anggota bertugas aktif ditemui untuk borang ini.', 'warning');
+        }
+        const settingsObj = (st.db && st.db.settings) ? st.db.settings : {};
+        const doc = new jsPDF('p', 'mm', 'a4');
+        const titleMonthStr = (M_NAMES[monthIndex] || "BULAN").toUpperCase();
+        
+        printMems.forEach((m, idx) => {
+          if (idx > 0) doc.addPage();
+          doc.setLineWidth(0.25).setDrawColor(148, 163, 184).rect(10, 10, 190, 277);
+          const locationsList = (st.db && st.db.locations) ? st.db.locations : [];
+          const locationObj = locationsList.find(l => l.id === m.locId);
+          const locationName = (locationObj ? locationObj.name : 'TIDAK DIKETAHUI').toUpperCase();
+          const rateValue = parseFloat(m.kadar || 0);
+          const cleanNoAhli = String(m.noAhli || m.id || '').replace(/'/g, '').trim();
+
+          doc.setFont('helvetica', 'bold').setFontSize(11).setTextColor(15, 23, 42);
+          doc.text('LAMPIRAN D', 105, 16, { align: 'center' });
+          doc.setFontSize(9.5);
+          doc.text('BORANG TUNTUTAN ELAUN PENUGASAN KAWALAN KESELAMATAN', 105, 21, { align: 'center' });
+          
+          doc.setFont('helvetica', 'normal').setFontSize(8).setTextColor(51, 65, 85);
+          doc.text('NEGERI', 15, 28); 
+          doc.text('DAERAH', 15, 33); 
+          doc.text('PENUGASAN', 15, 38); 
+          doc.setFont('helvetica', 'bold');
+          doc.text(': JOHOR', 45, 28);
+          doc.text(`: ${(settingsObj.report_daerah || 'BATU PAHAT').toUpperCase()}`, 45, 33);
+          doc.text(': KAWALAN KESELAMATAN', 45, 38);
+          doc.setFont('helvetica', 'normal');
+          doc.text('TEMPAT PENUGASAN', 110, 28); 
+          doc.text('BULAN', 110, 33); 
+          doc.text('TAHUN', 110, 38); 
+          doc.setFont('helvetica', 'bold');
+          doc.text(`: ${locationName}`, 145, 28);
+          doc.text(`: ${titleMonthStr}`, 145, 33);
+          doc.text(`: ${st.year}`, 145, 38);
+          doc.setDrawColor(148, 163, 184).setLineWidth(0.2).setFillColor(255, 255, 255);
+          doc.rect(15, 42, 180, 15, 'FD');
+          doc.line(105, 42, 105, 57); 
+          doc.line(15, 47, 195, 47);   
+          doc.line(15, 52, 195, 52);   
+          doc.setFont('helvetica', 'normal').setFontSize(7.5).setTextColor(51, 65, 85);
+          doc.text('NAMA', 17, 45.5);
+          doc.text('NO. MYKAD', 17, 50.5);
+          doc.text('NO. AHLI', 17, 55.5);
+          doc.text('NO AKAUN', 107, 45.5);
+          doc.text('NAMA BANK', 107, 50.5);
+          doc.text('NO. TELEFON', 107, 55.5);
+          doc.setFont('helvetica', 'bold').setTextColor(15, 23, 42);
+          doc.text(': ' + (m.nama || '').toUpperCase(), 45, 45.5);
+          doc.text(': ' + (m.kp || ''), 45, 50.5);
+          doc.text(': ' + cleanNoAhli, 45, 55.5);
+          doc.text(': ' + (m.akaun || ''), 135, 45.5);
+          doc.text(': ' + (m.bank || '').toUpperCase(), 135, 50.5);
+          doc.text(': ' + (m.tel || ''), 135, 55.5);
+          const stats = calcMemberStats(m.id, st);
+          let tableRows = [];
+          for (let d = 1; d <= maxD; d++) {
+            const dateStr = `${d.toString().padStart(2, '0')}/${st.month.toString().padStart(2, '0')}/${st.year}`;
+            const resolved = resolveShiftTimes(m, d, st.year, st.month, st);
+            
+            tableRows.push([
+              d,
+              dateStr,
+              resolved.masuk,
+              '', 
+              resolved.keluar,
+              '', 
+              resolved.jam,
+              resolved.catatan
+            ]);
+          }
+          doc.autoTable({
+            startY: 61,
+            head: [['BIL.', 'TARIKH', 'WAKTU MASUK', 'T.TANGAN', 'WAKTU KELUAR', 'T.TANGAN', 'JUMLAH JAM', 'CATATAN']],
+            body: tableRows,
+            theme: 'grid',
+            margin: { left: 15 },
+            styles: { fontSize: 6.2, cellPadding: 0.7, halign: 'center', valign: 'middle', lineColor: [148, 163, 184], lineWidth: 0.1 },
+            columnStyles: {
+              0: { cellWidth: 10 },
+              1: { cellWidth: 22 },
+              2: { cellWidth: 22 },
+              3: { cellWidth: 20 },
+              4: { cellWidth: 25 },
+              5: { cellWidth: 20 },
+              6: { cellWidth: 21 },
+              7: { halign: 'left', cellWidth: 40 }
+            },
+            headStyles: { fillColor: [15, 23, 42], textColor: [255, 255, 255], fontStyle: 'bold' }
+          });
+          let finalTableY = (doc.lastAutoTable ? doc.lastAutoTable.finalY : 61);
+          let summaryY = finalTableY + 2.5;
+          doc.setLineWidth(0.2).setDrawColor(148, 163, 184).setFillColor(250, 250, 250);
+          doc.rect(15, summaryY, 180, 14, 'FD');
+          
+          doc.line(134, summaryY, 134, summaryY + 14); 
+          doc.line(15, summaryY + 4.5, 195, summaryY + 4.5); 
+          doc.line(15, summaryY + 9.5, 195, summaryY + 9.5); 
+          doc.setFont('helvetica', 'normal').setFontSize(6.8).setTextColor(51, 65, 85);
+          doc.text("JUMLAH JAM", 17, summaryY + 3.2);
+          doc.setFont('helvetica', 'bold').text(`${stats.hrs}`, 136, summaryY + 3.2);
+          doc.setFont('helvetica', 'normal');
+          doc.text(`JUMLAH JAM BEKERJA DALAM SEBULAN x KADAR SEJAM (RM ${rateValue.toFixed(2)} / RM 8.00)`, 17, summaryY + 7.8);
+          doc.text(`${stats.hrs} x RM${rateValue.toFixed(2)}`, 136, summaryY + 7.8);
+          doc.setFont('helvetica', 'bold');
+          doc.text("JUMLAH", 17, summaryY + 12.8);
+          doc.setTextColor(30, 58, 138);
+          doc.text(`RM ${formatRM(stats.allowance)}`, 136, summaryY + 12.8);
+          let noticeY = summaryY + 18.5;
+          doc.setLineWidth(0.15).setDrawColor(148, 163, 184);
+          doc.line(15, noticeY, 195, noticeY); 
+          
+          doc.setFont('helvetica', 'normal').setFontSize(6.3).setTextColor(71, 85, 105);
+          doc.text("Dengan ini disahkan bahawa segala butiran maklumat and tuntutan yang dinyatakan di atas adalah benar dan betul.", 15, noticeY + 3.8, { maxWidth: 105 });
+          
+          doc.setFont('helvetica', 'bold').setFontSize(6.5).setTextColor(190, 24, 24); 
+          doc.text("RUANGAN INI UNTUK KEGUNAAN PEJABAT RELA SAHAJA", 121, noticeY + 3.8);
+          const sigY = noticeY + 11.5; 
+          doc.setFont('helvetica', 'bold').setFontSize(7).setTextColor(15, 23, 42);
+          
+          doc.text('DISEDIAKAN OLEH PETUGAS :', 15, sigY);
+          doc.text('DISAHKAN OLEH STAF/PEGAWAI', 75, sigY);
+          doc.text('PREMIS/AGENSI :', 75, sigY + 3.2);
+          doc.text('DISEMAK OLEH :', 135, sigY);
+          const lineOffset = sigY + 14.5;
+          doc.setFont('helvetica', 'normal').setFontSize(6.3).setTextColor(100, 116, 139);
+          
+          doc.text("T.TANGAN   :", 15, lineOffset);
+          doc.text("............................................", 31, lineOffset);
+          doc.text("NAMA           :", 15, lineOffset + 4.2);
+          doc.setFont('helvetica', 'bold').setTextColor(15, 23, 42);
+          doc.text((m.nama || '').toUpperCase(), 31, lineOffset + 4.2, { maxWidth: 38 });
+          doc.setFont('helvetica', 'normal').setTextColor(100, 116, 139);
+          doc.text("JAWATAN     : PENYELIA / ANGGOTA", 15, lineOffset + 8.4);
+          doc.text("TARIKH         :", 15, lineOffset + 12.6);
+          doc.text(`01/${(st.month).toString().padStart(2, '0')}/${st.year}`, 31, lineOffset + 12.6);
+          doc.text("T.TANGAN   :", 75, lineOffset);
+          doc.text("............................................", 91, lineOffset);
+          doc.text("NAMA           :", 75, lineOffset + 4.2);
+          doc.text("............................................", 91, lineOffset + 4.2);
+          doc.text("JAWATAN     :", 75, lineOffset + 8.4);
+          doc.text("............................................", 91, lineOffset + 8.4);
+          doc.text("TARIKH         :", 75, lineOffset + 12.6);
+          doc.text("____/____/________", 91, lineOffset + 12.6);
+          doc.text("COP JABATAN :", 75, lineOffset + 16.8);
+          doc.text("T.TANGAN   :", 135, lineOffset);
+          doc.text("............................................", 151, lineOffset);
+          doc.text("NAMA           :", 135, lineOffset + 4.2);
+          doc.text("............................................", 151, lineOffset + 4.2);
+          doc.text("JAWATAN     :", 135, lineOffset + 8.4);
+          doc.text("............................................", 151, lineOffset + 8.4);
+          doc.text("TARIKH         :", 135, lineOffset + 12.6);
+          doc.text("____/____/________", 151, lineOffset + 12.6);
+          doc.text("COP JABATAN :", 135, lineOffset + 16.8);
+        });
+        const finalFilename = `Lampiran_D_Tuntutan_${targetMemberId === 'ALL' ? 'Pukal' : targetMemberId}_${cleanedMonthName}_${st.year}.pdf`;
+        const pdfDataUri = doc.output('datauristring');
+        
+        pdfGeneratedData = {
+          uri: pdfDataUri,
+          filename: finalFilename,
+          title: 'Lampiran D'
+        };
+        attemptSend();
+      } catch(e) {
+        console.error(e);
+        alertMsg('Gagal menjana laporan Borang Tuntutan Individu.', 'error');
+        window.removeEventListener('message', handleHandshake);
+        showLoading(false);
+      }
+    }, 50);
+  }
+
+  // =============================================================================================
+  // --- FUNGSI KHAS: JANAAN FAIL EXCEL BAGI BORANG TUNTUTAN INDIVIDU (LAMPIRAN D FORMAT PENUH) ---
+  // =============================================================================================
+  function generateIndividualTuntutanExcel(st, targetMemberId) {
+    showLoading(true);
+    setTimeout(() => {
+      try {
+        let reportLocIds = [];
+        if (st.locId === 'all') {
+          if (st.role === 'admin') {
+            reportLocIds = st.db.locations.map(l => l.id);
+          } else {
+            reportLocIds = st.allowedLocs.split(',');
+          }
+        } else {
+          reportLocIds = [st.locId];
+        }
+        
+        const mems = st.db.members.filter(m => reportLocIds.includes(m.locId));
+        let printMems = [];
+        
+        if (targetMemberId === 'ALL') {
+          printMems = mems.filter((m) => calcMemberStats(m.id, st).hrs > 0);
+        } else {
+          const singleMem = mems.find(m => m.id === targetMemberId);
+          if (singleMem) printMems = [singleMem];
+        }
+        if (printMems.length === 0) {
+          showLoading(false);
+          return alertMsg('Tiada rekod anggota bertugas aktif ditemui untuk borang ini.', 'warning');
+        }
+        
+        const settingsObj = (st.db && st.db.settings) ? st.db.settings : {};
+        const maxD = new Date(st.year, st.month, 0).getDate();
+        const wb = XLSX.utils.book_new();
+        
+        printMems.forEach((m) => {
+          let aoa = [];
+          const stats = calcMemberStats(m.id, st);
+          const sectorName = (st.db.locations.find(l => l.id === m.locId)?.name || 'TIDAK DIKETAHUI').toUpperCase();
+          const cleanNoAhli = String(m.noAhli || m.id || '').replace(/'/g, '').trim();
+
+          aoa.push(['LAMPIRAN D']);
+          aoa.push(['BORANG TUNTUTAN ELAUN PENUGASAN KAWALAN KESELAMATAN']);
+          aoa.push([]);
+          aoa.push(['NEGERI:', 'JOHOR', '', '', 'TEMPAT PENUGASAN:', sectorName]);
+          aoa.push(['DAERAH:', (settingsObj.report_daerah || 'BATU PAHAT').toUpperCase(), '', '', 'BULAN:', M_NAMES[st.month-1].toUpperCase()]);
+          aoa.push(['PENUGASAN:', 'KAWALAN KESELAMATAN', '', '', 'TAHUN:', st.year.toString()]);
+          aoa.push([]);
+          aoa.push(['NAMA:', (m.nama || '').toUpperCase(), '', '', 'NO AKAUN:', { v: String(m.akaun || '').replace(/'/g, '').trim(), t: 's' }]);
+          aoa.push(['NO. MYKAD:', { v: String(m.kp || '').replace(/'/g, '').trim(), t: 's' }, '', '', 'NAMA BANK:', (m.bank || '').toUpperCase()]);
+          aoa.push(['NO. AHLI:', { v: cleanNoAhli, t: 's' }, '', '', 'NO. TELEFON:', { v: String(m.tel || '').replace(/'/g, '').trim(), t: 's' }]);
+          aoa.push([]);
+          aoa.push(['BIL.', 'TARIKH', 'WAKTU MASUK', 'T.TANGAN', 'WAKTU KELUAR', 'T.TANGAN', 'JUMLAH JAM', 'CATATAN']);
+          
+          for (let d = 1; d <= maxD; d++) {
+            const dateStr = `${d.toString().padStart(2, '0')}/${st.month.toString().padStart(2, '0')}/${st.year}`;
+            const resolved = resolveShiftTimes(m, d, st.year, st.month, st);
+            aoa.push([
+              d,
+              dateStr,
+              resolved.masuk,
+              '',
+              resolved.keluar,
+              '',
+              resolved.jam,
+              resolved.catatan
+            ]);
+          }
+          
+          aoa.push(['', '', '', '', '', 'JUMLAH JAM :', stats.hrs, '']);
+          aoa.push(['', '', '', '', '', `JUMLAH JAM BEKERJA DALAM SEBULAN x KADAR SEJAM (RM ${m.kadar.toFixed(2)}) :`, `${stats.hrs} x RM${m.kadar.toFixed(2)}`, '']);
+          aoa.push(['', '', '', '', '', 'JUMLAH :', `RM${formatRM(stats.allowance)}`, '']);
+          aoa.push([]);
+          aoa.push(['Dengan ini disahkan bahawa segala butiran maklumat and tuntutan yang dinyatakan di atas adalah benar and betul.', '', '', '', '', 'RUANGAN INI UNTUK KEGUNAAN PEJABAT RELA SAHAJA']);
+          aoa.push([]);
+          aoa.push(['DISEDIAKAN OLEH PETUGAS :', '', '', 'DISAHKAN OLEH STAF/PEGAWAI PREMIS/AGENSI :', '', '', 'DISEMAK OLEH :']);
+          aoa.push([]);
+          aoa.push(['T.TANGAN : __________________________', '', '', 'T.TANGAN : __________________________', '', '', 'T.TANGAN : __________________________']);
+          aoa.push(['NAMA : ' + (m.nama || '').toUpperCase(), '', '', 'NAMA : __________________________', '', '', 'NAMA : __________________________']);
+          aoa.push(['JAWATAN : PENYELIA / ANGGOTA', '', '', 'JAWATAN : __________________________', '', '', 'JAWATAN : __________________________']);
+          aoa.push([`TARIKH : 01/${(st.month).toString().padStart(2, '0')}/${st.year}`, '', '', 'TARIKH : __________________________', '', '', 'TARIKH : __________________________']);
+          aoa.push(['', '', '', 'COP JABATAN :', '', '', 'COP JABATAN :']);
+          
+          const ws = XLSX.utils.aoa_to_sheet(aoa);
+          
+          ws['!merges'] = [
+            {s: {r:0, c:0}, e: {r:0, c:7}},
+            {s: {r:1, c:0}, e: {r:1, c:7}},
+            
+            {s: {r:3, c:1}, e: {r:3, c:3}},
+            {s: {r:3, c:5}, e: {r:3, c:7}},
+            {s: {r:4, c:1}, e: {r:4, c:3}},
+            {s: {r:4, c:5}, e: {r:4, c:7}},
+            {s: {r:5, c:1}, e: {r:5, c:3}},
+            {s: {r:5, c:5}, e: {r:5, c:7}},
+            
+            {s: {r:7, c:1}, e: {r:7, c:3}},
+            {s: {r:7, c:5}, e: {r:7, c:7}},
+            {s: {r:8, c:1}, e: {r:8, c:3}},
+            {s: {r:8, c:5}, e: {r:8, c:7}},
+            {s: {r:9, c:1}, e: {r:9, c:3}},
+            {s: {r:9, c:5}, e: {r:9, c:7}},
+            
+            {s: {r:11+maxD, c:0}, e: {r:11+maxD, c:4}},
+            {s: {r:12+maxD, c:0}, e: {r:12+maxD, c:4}},
+            {s: {r:13+maxD, c:0}, e: {r:13+maxD, c:4}},
+            
+            {s: {r:15+maxD, c:0}, e: {r:15+maxD, c:4}},
+            {s: {r:15+maxD, c:5}, e: {r:15+maxD, c:7}},
+            
+            {s: {r:17+maxD, c:0}, e: {r:17+maxD, c:2}},
+            {s: {r:17+maxD, c:3}, e: {r:17+maxD, c:5}},
+            {s: {r:17+maxD, c:6}, e: {r:17+maxD, c:7}},
+            
+            {s: {r:19+maxD, c:0}, e: {r:19+maxD, c:2}},
+            {s: {r:19+maxD, c:3}, e: {r:19+maxD, c:5}},
+            {s: {r:19+maxD, c:6}, e: {r:19+maxD, c:7}},
+            
+            {s: {r:20+maxD, c:0}, e: {r:20+maxD, c:2}},
+            {s: {r:20+maxD, c:3}, e: {r:20+maxD, c:5}},
+            {s: {r:20+maxD, c:6}, e: {r:20+maxD, c:7}},
+            
+            {s: {r:21+maxD, c:0}, e: {r:21+maxD, c:2}},
+            {s: {r:21+maxD, c:3}, e: {r:21+maxD, c:5}},
+            {s: {r:21+maxD, c:6}, e: {r:21+maxD, c:7}},
+            
+            {s: {r:22+maxD, c:0}, e: {r:22+maxD, c:2}},
+            {s: {r:22+maxD, c:3}, e: {r:22+maxD, c:5}},
+            {s: {r:22+maxD, c:6}, e: {r:22+maxD, c:7}},
+            
+            {s: {r:23+maxD, c:0}, e: {r:23+maxD, c:2}},
+            {s: {r:23+maxD, c:3}, e: {r:23+maxD, c:5}},
+            {s: {r:23+maxD, c:6}, e: {r:23+maxD, c:7}}
+          ];
+          
+          ws['!cols'] = [
+            {wch: 15},
+            {wch: 25},
+            {wch: 18},
+            {wch: 15},
+            {wch: 25},
+            {wch: 15},
+            {wch: 15},
+            {wch: 35}
+          ];
+          
+          let safeSheetName = String(m.nama || '').substring(0, 31).replace(/[\\/?*\[\]]/g, '');
+          let sheetNameAttempt = safeSheetName;
+          let counter = 1;
+          
+          while(wb.SheetNames.includes(sheetNameAttempt)) {
+            sheetNameAttempt = safeSheetName.substring(0, 28) + "_" + counter;
+            counter++;
+          }
+          XLSX.utils.book_append_sheet(wb, ws, sheetNameAttempt);
+        });
+        
+        let fileSuffix = targetMemberId === 'ALL' ? 'Pukal' : targetMemberId;
+        const filename = `Lampiran_D_Tuntutan_${fileSuffix}_${M_SHORT[st.month-1]}_${st.year}.xlsx`;
+        
+        XLSX.writeFile(wb, filename);
+        
+        showLoading(false);
+        alertMsg('Fail Excel Lampiran D berjaya dimuat turun!');
+      } catch(e) {
+        console.error(e);
+        showLoading(false);
+        alertMsg('Gagal menjana fail Excel Lampiran D.', 'error');
+      }
+    }, 50);
+  }
+
+  // =========================================================================================
+  // --- FUNGSI PEMBANTU (HELPER): PENYELESAIAN SYIF & CAP WAKTU BERTUGAS ---
+  // =========================================================================================
+  function resolveShiftTimes(m, d, Y, M, st) {
+    const k = `${m.locId}-${m.id}-${Y}-${M}-${d}`;
+    const attendanceDb = (st.db && st.db.attendance) ? st.db.attendance : {};
+    const rosterDb = (st.db && st.db.roster) ? st.db.roster : {};
+    
+    const attVal = attendanceDb[k] || '';
+    const rosterVal = rosterDb[k] || '';
+    
+    if (!attVal || attVal === 'X' || attVal === 'OFF' || attVal.startsWith('IN:') || attVal.includes('?')) {
+      return { masuk: '', keluar: '', jam: '', catatan: '' };
+    }
+    
+    const hrs = parseFloat(attVal);
+    if (isNaN(hrs) || hrs <= 0) {
+      return { masuk: '', keluar: '', jam: '', catatan: '' };
+    }
+    
+    let masuk = "08:00 PG";
+    let keluar = "16:00 PTG";
+    let catatan = rosterVal ? `SYIF ${String(rosterVal).toUpperCase()}` : "BERTUGAS";
+    
+    if (hrs === 12) {
+      if (rosterVal === 'PAGI') {
+        masuk = "08:00 PG";
+        keluar = "20:00 MLM";
+      } else if (rosterVal === 'MALAM') {
+        masuk = "20:00 MLM";
+        keluar = "08:00 PG";
+      } else {
+        masuk = "08:00 PG";
+        keluar = "20:00 MLM";
+      }
+    } 
+    else if (hrs === 9) {
+      if (rosterVal === 'PAGI') {
+        masuk = "08:00 PG";
+        keluar = "17:00 PTG";
+      } else if (rosterVal === 'PETANG') {
+        masuk = "15:00 PTG";
+        keluar = "00:00 MLM";
+      } else if (rosterVal === 'MALAM') {
+        masuk = "23:00 MLM";
+        keluar = "08:00 PG";
+      }
+    }
+    else if (hrs === 8) {
+      if (rosterVal === 'PAGI') {
+        masuk = "08:00 PG";
+        keluar = "16:00 PTG";
+      } else if (rosterVal === 'PETANG') {
+        masuk = "16:00 PTG";
+        keluar = "00:00 MLM";
+      } else if (rosterVal === 'MALAM') {
+        masuk = "00:00 MLM";
+        keluar = "08:00 PG";
+      }
+    } 
+    else {
+      masuk = "08:00 PG";
+      const endHour = (8 + Math.round(hrs)) % 24;
+      const ampm = endHour >= 12 ? (endHour >= 20 ? "MLM" : "PTG") : "PG";
+      const displayHr = endHour > 12 ? endHour - 12 : (endHour === 0 ? 12 : endHour);
+      keluar = `${String(displayHr).padStart(2, '0')}:00 ${ampm}`;
+      catatan = `KERJA LEBIH MASA (${hrs} J)`;
+    }
+    
+    return { masuk, keluar, jam: hrs.toString(), catatan };
+  }
+
+  // =========================================================================================
+  // --- FUNGSI GLOBAL SINKRONUS (BYPASS POPUP BLOCKER) ---
+  // =========================================================================================
+  window.executeReportPDFJS = function(reportType) {
+    const st = window.appState;
+    const previewUrl = (st.db && st.db.settings && st.db.settings.github_preview_url) ? st.db.settings.github_preview_url : PREVIEW_URL;
+    st.formModal.open = false;
+    executeDirectPDFGeneration(reportType, previewUrl);
+  };
+
+  window.executeReportExcelJS = function(reportType) {
+    const st = window.appState;
+    st.formModal.open = false;
+    if (reportType === 'B') generateLampiranBExcel(st);
+    else if (reportType === 'BANK') generateRumusanBankExcel(st);
+    else if (reportType === 'PENGAKUAN') generatePengakuanExcel(st);
+    else if (reportType === 'JADUAL') generateJadualRosterExcel(st);
+  };
+
+  window.executeAffinPDFJS = function() {
+    const st = window.appState;
+    const previewUrl = (st.db && st.db.settings && st.db.settings.github_preview_url) ? st.db.settings.github_preview_url : PREVIEW_URL;
+    st.formModal.open = false;
+    generateAffinPDF(st, previewUrl);
+  };
+
+  window.executeAffinExcelJS = function() {
+    const st = window.appState;
+    st.formModal.open = false;
+    generateAffinExcel(st);
+  };
+
+  window.executeTuntutanPDFJS = function() {
+    const st = window.appState;
+    const previewUrl = (st.db && st.db.settings && st.db.settings.github_preview_url) ? st.db.settings.github_preview_url : PREVIEW_URL;
+    const selectEl = document.getElementById('modal-select-member');
+    const selVal = selectEl ? selectEl.value : 'ALL';
+    st.formModal.open = false;
+    generateIndividualTuntutanPDF(st, previewUrl, selVal);
+  };
+
+  window.executeTuntutanExcelJS = function() {
+    const st = window.appState;
+    const selectEl = document.getElementById('modal-select-member');
+    const selVal = selectEl ? selectEl.value : 'ALL';
+    st.formModal.open = false;
+    generateIndividualTuntutanExcel(st, selVal);
+  };
+</script>
