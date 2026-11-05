@@ -150,7 +150,7 @@
       return;
     }
 
-    // Modal Pilihan Dwi-Format untuk Borang Tuntutan Lampiran D
+    // Modal Pilihan Dwi-Format untuk Borang Tuntutan Lampiran V2
     if (type === 'TUNTUTAN') {
       let reportLocIds = [];
       if (st.locId === 'all') {
@@ -171,14 +171,14 @@
       }
 
       let memberOptions = activeMems.map(m => `<option value="${m.id}">${(m.nama || '').toUpperCase()} (${m.kp || ''})</option>`).join('');
-      st.formModal.title = 'Borang Tuntutan Lampiran D';
+      st.formModal.title = 'Borang Tuntutan Lampiran V2';
       document.getElementById('form-body-inject').innerHTML = `
         <div class="space-y-6 page-transition">
           <div class="w-16 h-16 bg-indigo-50 text-indigo-600 rounded-3xl flex items-center justify-center mx-auto text-2xl border border-indigo-100 shadow-sm">
             <i class="fas fa-file-invoice-dollar"></i>
           </div>
           <div class="text-center">
-            <h4 class="text-sm font-black text-slate-800 uppercase tracking-wide">Borang Tuntutan Lampiran D</h4>
+            <h4 class="text-sm font-black text-slate-800 uppercase tracking-wide">Borang Tuntutan Lampiran V2</h4>
             <p class="text-xs text-slate-500 mt-1">Sila pilih anggota bertugas serta format fail pilihan anda:</p>
           </div>
           <div class="space-y-2 text-left">
@@ -304,14 +304,6 @@
 
           const enabledSmeLocs = (st.db.settings.sme_enabled_locations || '').split(',');
 
-          // Parse tetapan kadar insentif pintar lokasi
-          let nbcCustomRates = {};
-          try {
-            nbcCustomRates = JSON.parse(st.db.settings.nbc_custom_rates_json || '{}');
-          } catch(e) {
-            nbcCustomRates = {};
-          }
-
           const memberItems = [];
           activeMems.forEach((m) => {
             const stats = calcMemberStats(m.id, st);
@@ -408,9 +400,6 @@
           const orphanThreshold = 55;
           const grandTotalAll = grandTotalAllowance + grandTotalIncentive + grandTotalSme;
 
-          // ===================================================================
-          // PENYUSUNAN SEMULA BARIS RUMUSAN & JUMLAH KESELURUHAN (KEMAS & KONSISTEN)
-          // ===================================================================
           // Baris 1: JUMLAH JAM SEHARI
           let summaryRow1 = [
             { content: 'JUMLAH JAM SEHARI', colSpan: 2, styles: { halign: 'center', fontStyle: 'bold' } }
@@ -424,7 +413,7 @@
           summaryRow1.push({ content: formatRM(grandTotalSme), styles: { halign: 'center', fontStyle: 'bold' } });
           summaryRow1.push({ content: '', styles: { halign: 'center' } });
 
-          // Baris 2: JUMLAH KESELURUHAN (DITENGAHKAN / CENTERED UNTUK ESTETIKA SEIMBANG & KEMAS)
+          // Baris 2: JUMLAH KESELURUHAN (CENTERED)
           let summaryRow2 = [
             { 
               content: 'JUMLAH KESELURUHAN', 
@@ -445,7 +434,6 @@
             const isLastPage = (pageIndex === totalPagesCount - 1);
             if (!isFirstPage) doc.addPage();
 
-            // Pengepala Format Baharu PTJ RELA (Dinamik Mengikut Tetapan Sistem)
             const configuredMainTitle = anyNbc 
               ? (st.db.settings.title_b_nbc || 'RUMUSAN TUNTUTAN PEMBAYARAN PTJ RELA')
               : (st.db.settings.title_b_standard || 'RUMUSAN TUNTUTAN PEMBAYARAN PTJ RELA');
@@ -529,13 +517,11 @@
                 finalY = 15;
               }
 
-              // Nota Panduan Rasmi
               doc.setFont('helvetica', 'bold').setFontSize(6.2).setTextColor(0, 0, 0);
               doc.text('NOTA: ', 12, finalY);
               doc.setFont('helvetica', 'normal');
               doc.text('Senarai bilangan Petugas dan tarikh boleh dipinda manakala format asal perlu dikekalkan. Sila garis/ palang ruangan yang tidak berkenaan', 21, finalY);
 
-              // 3 Ruangan Pengesahan (Signature Box)
               const signatureY = finalY + signatureSpacing;
               doc.setFontSize(7).setFont('helvetica', 'bold').setTextColor(0, 0, 0)
                 .text('DISEDIAKAN OLEH (PT/PPRD ):', 15, signatureY)
@@ -564,7 +550,6 @@
         
         // --- MODUL: PENGAKUAN TUNTUTAN ELAUN ---
         else if (type === 'PENGAKUAN') {
-          // Sistem menyokong penggabungan/penyatuan RM tuntutan untuk lokasi-lokasi berkumpulan rasmi
           let combinedGroupTitle = "";
           let targetLocIds = [];
 
@@ -579,7 +564,6 @@
             return n.includes("JPN") || s.includes("JPN") || n.includes("JABATAN PENDAFTARAN NEGARA");
           };
 
-          // Pengesanan Pintar Sektor NBC / PGA
           const nbcConfigIds = (st.db.settings.nbc_enabled_locations || '').split(',').filter(Boolean);
           const isPgaLocation = (l) => {
             if (!l) return false;
@@ -596,9 +580,7 @@
             currentLoc = st.db.locations.find(x => x.id === st.locId);
           }
 
-          // KECERDASAN PENYATUAN LOKASI BERKUMPULAN
           if (currentLoc && isPgaLocation(currentLoc)) {
-            // Jika memilih mana-mana pos PGA, himpunkan SEMUA pos PGA/NBC serentak
             const allPgaLocations = st.db.locations.filter(isPgaLocation);
             targetLocIds = allPgaLocations.map(l => l.id);
             const pgaNames = allPgaLocations.map(l => l.short || l.name).join(', ');
@@ -615,7 +597,6 @@
             targetLocIds = [st.locId];
             combinedGroupTitle = currentLoc.name;
           } else {
-            // Jika paparan 'SEMUA LOKASI' (KUMULATIF)
             targetLocIds = reportLocIds;
             combinedGroupTitle = locNameDisplay;
           }
@@ -630,7 +611,6 @@
             ? (st.db.settings.title_pengakuan_nbc || "PENGAKUAN TUNTUTAN ELAUN SERTA INSENTIF ANGGOTA DALAM PENUGASAN KOLABORASI RELA - PGA BAGI KAWALAN SEMPADAN NEGARA") 
             : (st.db.settings.title_pengakuan_standard || "PENGAKUAN TUNTUTAN ELAUN ANGGOTA RELA BAGI PENUGASAN DI {lokasi}");
 
-          // Huraikan token dinamik {lokasi}, {daerah}, {bulan}, {tahun} secara automatik
           let titleText = window.resolveDynamicTitleJS 
             ? window.resolveDynamicTitleJS(rawTitleText, combinedGroupTitle, st)
             : rawTitleText.replace(/{lokasi}|{loc}/gi, combinedGroupTitle);
@@ -734,7 +714,7 @@
             totalRow.push(`RM${formatRM(grandTotalSme)}`);
           }
           
-          const spanTrailing = 3; // Bank, KP, Telefon
+          const spanTrailing = 3;
           totalRow.push({ content: `TOTAL BERSIH: RM${formatRM(grandTotalAll)}`, colSpan: spanTrailing, styles: { halign: 'center', fontStyle: 'bold' } });
           bodyRows.push(totalRow);
           
@@ -934,21 +914,18 @@
           : configuredExcelMainTitle.replace(/{lokasi}|{loc}/gi, locNameDisplay);
 
         let aoa = [];
-        // Pengepala Utama Format Baharu
         aoa.push([resolvedExcelMainTitle.toUpperCase()]);
         aoa.push(['JABATAN SUKARELAWAN MALAYSIA (RELA)']);
         aoa.push([`LOKASI PENUGASAN: ${locNameDisplay}`]);
         aoa.push([`DAERAH: ${daerahText} NEGERI: JOHOR BULAN: ${bulanNama} TAHUN: ${st.year}`]);
         aoa.push([]);
 
-        // Pengepala Baris 1
         let h1 = ['BIL', 'NAMA PETUGAS'];
         h1.push(`TARIKH DAN JUMLAH JAM BERTUGAS (8JAM = 8) (TIDAK BERTUGAS = 0)`);
         for (let d = 2; d <= maxD; d++) h1.push('');
         h1.push('BIL. HARI', 'BIL. JAM', 'KADAR TUNTUTAN SEJAM (RM)', 'JUMLAH ELAUN (RM)', 'JUMLAH INSENTIF (RM)', 'JUMLAH SME (RM)', 'JUMLAH (RM)');
         aoa.push(h1);
 
-        // Pengepala Baris 2 (Nombor Hari 1 - 31)
         let h2 = ['', ''];
         for (let d = 1; d <= maxD; d++) h2.push(d.toString());
         h2.push('', '', '', '', '', '', '');
@@ -1000,7 +977,6 @@
           grandSme += smeAmount;
         });
 
-        // Baris JUMLAH JAM SEHARI
         let rowJamSehari = ['JUMLAH JAM SEHARI', ''];
         for (let d = 1; d <= maxD; d++) {
           rowJamSehari.push(dailyActiveHours[d - 1]);
@@ -1008,7 +984,6 @@
         rowJamSehari.push('', 'JUMLAH', '', formatRM(grandElaun), formatRM(grandInc), formatRM(grandSme), '');
         aoa.push(rowJamSehari);
 
-        // Baris JUMLAH KESELURUHAN (DIPUSATKAN MERENTASI RUANG TUNTUTAN)
         const grandTotalAll = grandElaun + grandInc + grandSme;
         let rowKeseluruhan = ['JUMLAH KESELURUHAN'];
         for (let i = 1; i <= maxD + 4; i++) rowKeseluruhan.push('');
@@ -1022,7 +997,6 @@
         aoa.push(['NOTA: Senarai bilangan Petugas dan tarikh boleh dipinda manakala format asal perlu dikekalkan. Sila garis/ palang ruangan yang tidak berkenaan']);
         aoa.push([]);
 
-        // Blok Tandatangan Bawah
         aoa.push(['DISEDIAKAN OLEH (PT/PPRD ):', '', '', '', '', '', '', '', '', '', 'DISEMAK OLEH (PRD/PPRD):', '', '', '', '', '', '', '', '', '', 'DILULUSKAN OLEH (PRN/KOMANDAN/PO/EO):']);
         aoa.push([]);
         aoa.push(['TANDATANGAN:', '', '', '', '', '', '', '', '', '', 'TANDATANGAN:', '', '', '', '', '', '', '', '', '', 'TANDATANGAN:']);
@@ -1032,25 +1006,24 @@
 
         const ws = XLSX.utils.aoa_to_sheet(aoa);
 
-        // Merge cells untuk tajuk utama dan sub-header
         ws['!merges'] = [
           { s: { r: 0, c: 0 }, e: { r: 0, c: maxD + 8 } },
           { s: { r: 1, c: 0 }, e: { r: 1, c: maxD + 8 } },
           { s: { r: 2, c: 0 }, e: { r: 2, c: maxD + 8 } },
           { s: { r: 3, c: 0 }, e: { r: 3, c: maxD + 8 } },
-          { s: { r: 5, c: 0 }, e: { r: 6, c: 0 } }, // BIL
-          { s: { r: 5, c: 1 }, e: { r: 6, c: 1 } }, // NAMA PETUGAS
-          { s: { r: 5, c: 2 }, e: { r: 5, c: maxD + 1 } }, // TARIKH & JAM (1-31)
-          { s: { r: 5, c: maxD + 2 }, e: { r: 6, c: maxD + 2 } }, // BIL. HARI
-          { s: { r: 5, c: maxD + 3 }, e: { r: 6, c: maxD + 3 } }, // BIL. JAM
-          { s: { r: 5, c: maxD + 4 }, e: { r: 6, c: maxD + 4 } }, // KADAR TUNTUTAN SEJAM
-          { s: { r: 5, c: maxD + 5 }, e: { r: 6, c: maxD + 5 } }, // JUMLAH ELAUN
-          { s: { r: 5, c: maxD + 6 }, e: { r: 6, c: maxD + 6 } }, // JUMLAH INSENTIF
-          { s: { r: 5, c: maxD + 7 }, e: { r: 6, c: maxD + 7 } }, // JUMLAH SME
-          { s: { r: 5, c: maxD + 8 }, e: { r: 6, c: maxD + 8 } }, // JUMLAH
-          { s: { r: 7 + activeMems.length, c: 0 }, e: { r: 7 + activeMems.length, c: 1 } }, // JUMLAH JAM SEHARI
-          { s: { r: 8 + activeMems.length, c: 0 }, e: { r: 8 + activeMems.length, c: maxD + 4 } }, // JUMLAH KESELURUHAN label
-          { s: { r: 8 + activeMems.length, c: maxD + 5 }, e: { r: 8 + activeMems.length, c: maxD + 8 } } // JUMLAH KESELURUHAN amount (4 lajur)
+          { s: { r: 5, c: 0 }, e: { r: 6, c: 0 } },
+          { s: { r: 5, c: 1 }, e: { r: 6, c: 1 } },
+          { s: { r: 5, c: 2 }, e: { r: 5, c: maxD + 1 } },
+          { s: { r: 5, c: maxD + 2 }, e: { r: 6, c: maxD + 2 } },
+          { s: { r: 5, c: maxD + 3 }, e: { r: 6, c: maxD + 3 } },
+          { s: { r: 5, c: maxD + 4 }, e: { r: 6, c: maxD + 4 } },
+          { s: { r: 5, c: maxD + 5 }, e: { r: 6, c: maxD + 5 } },
+          { s: { r: 5, c: maxD + 6 }, e: { r: 6, c: maxD + 6 } },
+          { s: { r: 5, c: maxD + 7 }, e: { r: 6, c: maxD + 7 } },
+          { s: { r: 5, c: maxD + 8 }, e: { r: 6, c: maxD + 8 } },
+          { s: { r: 7 + activeMems.length, c: 0 }, e: { r: 7 + activeMems.length, c: 1 } },
+          { s: { r: 8 + activeMems.length, c: 0 }, e: { r: 8 + activeMems.length, c: maxD + 4 } },
+          { s: { r: 8 + activeMems.length, c: maxD + 5 }, e: { r: 8 + activeMems.length, c: maxD + 8 } }
         ];
 
         const wb = XLSX.utils.book_new();
@@ -1563,7 +1536,7 @@
   }
 
   // =========================================================================================
-  // --- FUNGSI KHAS: JANAAN PDF BORANG TUNTUTAN ELAUN INDIVIDU (PORTRAIT & 1 PAGE FIXED) ---
+  // --- FUNGSI KHAS: JANAAN PDF BORANG TUNTUTAN LAMPIRAN V2 (SCREENSHOT 16 & 17 RASMI) ---
   // =========================================================================================
   function generateIndividualTuntutanPDF(st, previewUrl, targetMemberId) {
     const previewWin = window.open(previewUrl, '_blank');
@@ -1599,7 +1572,7 @@
           type: 'PDF_DATA',
           data: pdfGeneratedData.uri,
           filename: pdfGeneratedData.filename,
-          title: 'Borang Tuntutan PTJ RELA'
+          title: 'Lampiran V2'
         }, targetOrigin);
         
         window.removeEventListener('message', handleHandshake);
@@ -1650,7 +1623,7 @@
         printMems.forEach((m, idx) => {
           if (idx > 0) doc.addPage();
           
-          // Bingkai luar bergaris hitam kemas
+          // Bingkai luar border nipis kemas
           doc.setLineWidth(0.3).setDrawColor(0, 0, 0).rect(10, 8, 190, 281);
           
           const locationsList = (st.db && st.db.locations) ? st.db.locations : [];
@@ -1669,83 +1642,165 @@
           const smeAmount = isSmeLoc ? (stats.smeAmount || 0) : 0;
           const totalAll = stats.allowance + incAmount + smeAmount;
 
-          // Pengepala Utama Rasmi V2
-          doc.setFont('helvetica', 'bold').setFontSize(10).setTextColor(0, 0, 0);
-          doc.text('BORANG TUNTUTAN PEMBAYARAN PTJ RELA', 105, 14, { align: 'center' });
+          // 1. Label Atas Kanan LAMPIRAN V2
+          doc.setFont('helvetica', 'bold').setFontSize(11).setTextColor(0, 0, 0);
+          doc.text('LAMPIRAN V2', 196, 14, { align: 'right' });
+
+          // 2. Tajuk Utama Berpusat
+          doc.setFontSize(10);
+          doc.text('BORANG TUNTUTAN PEMBAYARAN PTJ RELA', 105, 18, { align: 'center' });
           doc.setFontSize(8.5);
-          doc.text('JABATAN SUKARELAWAN MALAYSIA (RELA)', 105, 18.5, { align: 'center' });
-          
-          // Maklumat Penugasan
-          doc.setFont('helvetica', 'bold').setFontSize(7.5).setTextColor(0, 0, 0);
-          doc.text('NEGERI', 14, 24); 
-          doc.text('DAERAH', 14, 28.5); 
-          doc.text('PENUGASAN', 14, 33); 
-          doc.setFont('helvetica', 'normal');
-          doc.text(':  JOHOR', 38, 24);
-          doc.text(`:  ${(settingsObj.report_daerah || 'RELA DAERAH BATU PAHAT').toUpperCase()}`, 38, 28.5);
-          doc.text(':  KAWALAN KESELAMATAN', 38, 33);
-          
-          doc.setFont('helvetica', 'bold');
-          doc.text('TEMPAT PENUGASAN', 108, 24); 
-          doc.text('BULAN', 108, 28.5); 
-          doc.text('TAHUN', 108, 33); 
-          doc.setFont('helvetica', 'normal');
-          doc.text(`:  ${locationName}`, 142, 24);
-          doc.text(`:  ${titleMonthStr}`, 142, 28.5);
-          doc.text(`:  ${st.year}`, 142, 33);
+          doc.text('JABATAN SUKARELAWAN MALAYSIA (RELA)', 105, 22.5, { align: 'center' });
 
-          // Kotak Profil Anggota & Bank (2 Bahagian Seimbang)
-          doc.setDrawColor(0, 0, 0).setLineWidth(0.2).setFillColor(255, 255, 255);
-          doc.rect(14, 36, 182, 16.5, 'FD');
-          doc.line(105, 36, 105, 52.5); // Garis pembahagi tengah
-          doc.line(14, 41.5, 196, 41.5);   
-          doc.line(14, 47, 196, 47);   
+          // 3. Kotak Status Jawatan Atas Kanan (Kosong Bersih tanpa tanda kurung atau palang)
+          doc.setFont('helvetica', 'normal').setFontSize(6.5).setTextColor(0, 0, 0);
+          doc.text('Sila tanda (/) yang berkenaan,', 140, 28);
+          doc.rect(140, 29.5, 56, 9.5);
+          doc.line(140, 34.2, 196, 34.2);
+          doc.line(180, 29.5, 180, 39);
+          doc.setFont('helvetica', 'bold').setFontSize(6.8);
+          doc.text('PENYELIA RELA', 142, 33);
+          doc.text('ANGGOTA RELA', 142, 37.8);
+          // Kotak [180-196] dibiarkan kosong bersih
 
+          // 4. Maklumat Penugasan (Kiri)
           doc.setFont('helvetica', 'bold').setFontSize(7).setTextColor(0, 0, 0);
-          doc.text('NAMA', 16, 40);
-          doc.text('NO. MYKAD', 16, 45.5);
-          doc.text('NO. AHLI RELA', 16, 51);
-          
-          doc.text('NO. AKAUN', 107, 40);
-          doc.text('NAMA BANK', 107, 45.5);
-          doc.text('NO. TELEFON', 107, 51);
+          doc.text('BULAN:', 14, 29);
+          doc.setFont('helvetica', 'normal');
+          doc.text(titleMonthStr, 28, 29);
+          doc.setFont('helvetica', 'bold');
+          doc.text('TAHUN:', 65, 29);
+          doc.setFont('helvetica', 'normal');
+          doc.text(String(st.year), 78, 29);
+
+          doc.setFont('helvetica', 'bold');
+          doc.text('DAERAH:', 14, 33.5);
+          doc.setFont('helvetica', 'normal');
+          doc.text((settingsObj.report_daerah || 'BATU PAHAT').toUpperCase(), 28, 33.5);
+          doc.setFont('helvetica', 'bold');
+          doc.text('NEGERI:', 65, 33.5);
+          doc.setFont('helvetica', 'normal');
+          doc.text('JOHOR', 78, 33.5);
+
+          doc.setFont('helvetica', 'bold');
+          doc.text('LOKASI PENUGASAN:', 14, 38);
+          doc.setFont('helvetica', 'normal');
+          doc.text(locationName, 43, 38);
+
+          // 5. Maklumat Profil Petugas & Bank (2 Lajur Kiri-Kanan)
+          const profY = 43.5;
+          doc.setFont('helvetica', 'bold').setFontSize(7).setTextColor(0, 0, 0);
+          doc.text('NAMA', 14, profY);
+          doc.text('NO. MYKAD', 14, profY + 4.2);
+          doc.text('NO. AHLI', 14, profY + 8.4);
 
           doc.setFont('helvetica', 'normal');
-          doc.text(':  ' + (m.nama || '').toUpperCase(), 38, 40);
-          doc.text(':  ' + cleanKp, 38, 45.5);
-          doc.text(':  ' + (cleanNoAhli || '-'), 38, 51);
-          
-          doc.text(':  ' + cleanAkaun, 130, 40);
-          doc.text(':  ' + (m.bank || '').toUpperCase(), 130, 45.5);
-          doc.text(':  ' + cleanTel, 130, 51);
+          doc.text(':  ' + (m.nama || '').toUpperCase(), 34, profY);
+          doc.text(':  ' + cleanKp, 34, profY + 4.2);
+          doc.text(':  ' + (cleanNoAhli || '-'), 34, profY + 8.4);
 
-          // Grid Jadual Harian
+          doc.setFont('helvetica', 'bold');
+          doc.text('NO AKAUN', 115, profY);
+          doc.text('NAMA BANK', 115, profY + 4.2);
+          doc.text('NO. TELEFON', 115, profY + 8.4);
+
+          doc.setFont('helvetica', 'normal');
+          doc.text(':  ' + cleanAkaun, 137, profY);
+          doc.text(':  ' + (m.bank || '').toUpperCase(), 137, profY + 4.2);
+          doc.text(':  ' + cleanTel, 137, profY + 8.4);
+
+          // 6. Grid Jadual Kehadiran 9 Lajur (Tarikh 1 hingga 31)
           let tableRows = [];
           for (let d = 1; d <= maxD; d++) {
             const dateStr = `${d.toString().padStart(2, '0')}/${(monthIndex + 1).toString().padStart(2, '0')}/${st.year}`;
             const resolved = resolveShiftTimes(m, d, st.year, st.month, st);
             
+            let dailyIncDisplay = '';
+            let dailySmeDisplay = '';
+
+            if (resolved.jam && parseFloat(resolved.jam) > 0) {
+              if (isNbcLoc) dailyIncDisplay = '1';
+              if (isSmeLoc) dailySmeDisplay = resolved.jam;
+            }
+
             tableRows.push([
               d,
               dateStr,
               resolved.masuk,
-              '', 
+              '',
               resolved.keluar,
-              '', 
-              resolved.jam,
-              resolved.catatan
+              '',
+              resolved.jam || '',
+              dailyIncDisplay,
+              dailySmeDisplay
             ]);
           }
 
+          // 7. 4 Baris Rumusan Pengiraan Bawah Jadual (Screenshot 17)
+          const grandJamPokok = stats.hrs;
+          const grandHariInc = isNbcLoc ? stats.dys : 0;
+          const grandJamSme = isSmeLoc ? stats.hrs : 0;
+
+          const nbcCustomRates = (function() {
+            try { return JSON.parse(settingsObj.nbc_custom_rates_json || '{}'); } catch(e) { return {}; }
+          })();
+          const incRate = (nbcCustomRates[m.locId] !== undefined)
+            ? parseFloat(nbcCustomRates[m.locId])
+            : parseFloat(settingsObj.nbc_incentive_rate || 30.00);
+          const smeRate = parseFloat(settingsObj.sme_rate_per_hr || 1.00);
+
+          // Baris 1: JUMLAH HARI/ JAM
+          tableRows.push([
+            { content: 'JUMLAH HARI/ JAM', colSpan: 6, styles: { halign: 'center', fontStyle: 'bold' } },
+            { content: grandJamPokok > 0 ? String(grandJamPokok) : '0', styles: { halign: 'center', fontStyle: 'bold' } },
+            { content: grandHariInc > 0 ? String(grandHariInc) : '0', styles: { halign: 'center', fontStyle: 'bold' } },
+            { content: grandJamSme > 0 ? String(grandJamSme) : '0', styles: { halign: 'center', fontStyle: 'bold' } }
+          ]);
+
+          // Baris 2: JUMLAH JAM BEKERJA DALAM SEBULAN x KADAR SEJAM
+          tableRows.push([
+            { content: 'JUMLAH JAM BEKERJA DALAM SEBULAN x KADAR SEJAM (RM9.80/ RM8.00)', colSpan: 6, styles: { halign: 'center', fontStyle: 'bold', fontSize: 5.4 } },
+            { content: grandJamPokok > 0 ? `${grandJamPokok} x RM${rateValue.toFixed(2)}` : `** x RM${rateValue.toFixed(2)}`, styles: { halign: 'center', fontSize: 5.4 } },
+            { content: grandHariInc > 0 ? `${grandHariInc} x RM${incRate.toFixed(2)}` : `** x RM${incRate.toFixed(2)}`, styles: { halign: 'center', fontSize: 5.4 } },
+            { content: grandJamSme > 0 ? `${grandJamSme} x RM${smeRate.toFixed(2)}` : `** x RM${smeRate.toFixed(2)}`, styles: { halign: 'center', fontSize: 5.4 } }
+          ]);
+
+          // Baris 3: JUMLAH
+          tableRows.push([
+            { content: 'JUMLAH', colSpan: 6, styles: { halign: 'center', fontStyle: 'bold' } },
+            { content: `RM${formatRM(stats.allowance)}`, styles: { halign: 'center', fontStyle: 'bold' } },
+            { content: `RM${formatRM(incAmount)}`, styles: { halign: 'center', fontStyle: 'bold' } },
+            { content: `RM${formatRM(smeAmount)}`, styles: { halign: 'center', fontStyle: 'bold' } }
+          ]);
+
+          // Baris 4: JUMLAH KESELURUHAN (colSpan: 3 bagi lajur nilai bersih)
+          tableRows.push([
+            { content: 'JUMLAH KESELURUHAN', colSpan: 6, styles: { halign: 'center', fontStyle: 'bold', fontSize: 6.5 } },
+            { content: `RM${formatRM(totalAll)}`, colSpan: 3, styles: { halign: 'center', fontStyle: 'bold', fontSize: 6.8 } }
+          ]);
+
+          let headRow = [
+            'BIL.', 
+            'TARIKH', 
+            'WAKTU MASUK', 
+            'T.TANGAN', 
+            'WAKTU KELUAR', 
+            'T.TANGAN', 
+            'ELAUN PENUGASAN\n(JUMLAH JAM)', 
+            'INSENTIF\nPENUGASAN\n(JUMLAH HARI/JAM)', 
+            'ELAUN PETUGAS\nSME (JUMLAH JAM)'
+          ];
+
           doc.autoTable({
-            startY: 54.5,
-            head: [['BIL.', 'TARIKH', 'WAKTU MASUK', 'T.TANGAN', 'WAKTU KELUAR', 'T.TANGAN', 'JUMLAH JAM', 'CATATAN']],
+            startY: 55,
+            head: [headRow],
             body: tableRows,
             theme: 'grid',
             margin: { left: 14, right: 14 },
             styles: { 
-              fontSize: 5.8, 
-              cellPadding: 0.55, 
+              fontSize: 5.5, 
+              cellPadding: 0.9, 
+              minCellHeight: 4.6, 
               halign: 'center', 
               valign: 'middle', 
               lineColor: [0, 0, 0], 
@@ -1753,133 +1808,99 @@
               textColor: [0, 0, 0] 
             },
             columnStyles: {
-              0: { cellWidth: 8 },
-              1: { cellWidth: 20 },
-              2: { cellWidth: 22 },
-              3: { cellWidth: 21 },
-              4: { cellWidth: 22 },
-              5: { cellWidth: 21 },
-              6: { cellWidth: 20, fontStyle: 'bold' },
-              7: { halign: 'left', cellWidth: 48 }
+              0: { cellWidth: 7 },
+              1: { cellWidth: 17 },
+              2: { cellWidth: 17 },
+              3: { cellWidth: 15 },
+              4: { cellWidth: 17 },
+              5: { cellWidth: 15 },
+              6: { cellWidth: 32 },
+              7: { cellWidth: 32 },
+              8: { cellWidth: 30 }
             },
-            headStyles: { fillColor: [241, 245, 249], textColor: [0, 0, 0], fontStyle: 'bold' }
+            headStyles: { 
+              fillColor: [248, 250, 252], 
+              textColor: [0, 0, 0], 
+              fontStyle: 'bold', 
+              valign: 'middle',
+              halign: 'center',
+              cellPadding: 1.0 
+            },
+            didParseCell: function (data) {
+              if (data.section === 'body' && data.row.index >= tableRows.length - 4) {
+                data.cell.styles.fillColor = [255, 255, 255];
+                data.cell.styles.textColor = [0, 0, 0];
+                data.cell.styles.fontStyle = 'bold';
+              }
+            }
           });
 
-          let finalTableY = (doc.lastAutoTable ? doc.lastAutoTable.finalY : 54.5);
-          let summaryY = finalTableY + 2;
+          let finalTableY = (doc.lastAutoTable ? doc.lastAutoTable.finalY : 55);
 
-          // Kiraan & Rumusan Kewangan Pintar (Termasuk Insentif & SME jika wujud)
-          const hasExtraCols = (incAmount > 0 || smeAmount > 0);
-          const summaryBoxHeight = hasExtraCols ? 18 : 13.5;
-
-          doc.setLineWidth(0.2).setDrawColor(0, 0, 0).setFillColor(255, 255, 255);
-          doc.rect(14, summaryY, 182, summaryBoxHeight, 'FD');
-          doc.line(134, summaryY, 134, summaryY + summaryBoxHeight); 
-          
-          doc.setFont('helvetica', 'normal').setFontSize(6.8).setTextColor(0, 0, 0);
-          
-          if (!hasExtraCols) {
-            doc.line(14, summaryY + 4.5, 196, summaryY + 4.5); 
-            doc.line(14, summaryY + 9, 196, summaryY + 9); 
-            
-            doc.text("JUMLAH JAM", 16, summaryY + 3.2);
-            doc.setFont('helvetica', 'bold').text(`${stats.hrs} JAM`, 136, summaryY + 3.2);
-            
-            doc.setFont('helvetica', 'normal');
-            doc.text(`JUMLAH JAM BEKERJA DALAM SEBULAN x KADAR SEJAM (RM ${rateValue.toFixed(2)})`, 16, summaryY + 7.7);
-            doc.text(`${stats.hrs} x RM${rateValue.toFixed(2)}`, 136, summaryY + 7.7);
-            
-            doc.setFont('helvetica', 'bold');
-            doc.text("JUMLAH KESELURUHAN (RM)", 16, summaryY + 12.2);
-            doc.text(`RM ${formatRM(stats.allowance)}`, 136, summaryY + 12.2);
-          } else {
-            // Format bertingkat pintar apabila ada Insentif / SME
-            doc.line(14, summaryY + 4.5, 196, summaryY + 4.5); 
-            doc.line(14, summaryY + 9, 196, summaryY + 9); 
-            doc.line(14, summaryY + 13.5, 196, summaryY + 13.5); 
-            
-            doc.text(`JUMLAH ELAUN PENUGASAN (${stats.hrs} JAM x RM ${rateValue.toFixed(2)})`, 16, summaryY + 3.2);
-            doc.setFont('helvetica', 'bold').text(`RM ${formatRM(stats.allowance)}`, 136, summaryY + 3.2);
-            
-            doc.setFont('helvetica', 'normal');
-            doc.text(`JUMLAH INSENTIF HARIAN KOLABORASI (${stats.dys} HARI)`, 16, summaryY + 7.7);
-            doc.text(`RM ${formatRM(incAmount)}`, 136, summaryY + 7.7);
-            
-            doc.text(`JUMLAH ELAUN SME (${stats.hrs} JAM)`, 16, summaryY + 12.2);
-            doc.text(`RM ${formatRM(smeAmount)}`, 136, summaryY + 12.2);
-            
-            doc.setFont('helvetica', 'bold');
-            doc.text("JUMLAH KESELURUHAN TUNTUTAN (RM)", 16, summaryY + 16.7);
-            doc.text(`RM ${formatRM(totalAll)}`, 136, summaryY + 16.7);
-          }
-
-          // Bahagian Pengakuan & Tandatangan 3 Pihak
-          let noticeY = summaryY + summaryBoxHeight + 2.5;
-          doc.setLineWidth(0.15).setDrawColor(0, 0, 0);
-          doc.line(14, noticeY, 196, noticeY); 
-          
-          doc.setFont('helvetica', 'normal').setFontSize(6.2).setTextColor(0, 0, 0);
-          doc.text("Dengan ini disahkan bahawa segala butiran maklumat dan tuntutan yang dinyatakan di atas adalah benar dan betul.", 14, noticeY + 3.5);
-          
-          doc.setFont('helvetica', 'bold').setFontSize(6.2);
-          doc.text("RUANGAN INI UNTUK KEGUNAAN PEJABAT RELA SAHAJA", 130, noticeY + 3.5);
-          
-          const sigY = noticeY + 8.5; 
-          doc.setFont('helvetica', 'bold').setFontSize(6.8).setTextColor(0, 0, 0);
-          doc.text('DISEDIAKAN OLEH PETUGAS :', 14, sigY);
-          doc.text('DISAHKAN OLEH STAF/PEGAWAI', 75, sigY);
-          doc.text('PREMIS/AGENSI :', 75, sigY + 3);
-          doc.text('DISEMAK OLEH (PEJABAT RELA DAERAH) :', 136, sigY);
-          
-          const lineOffset = sigY + 11.5;
-          doc.setFont('helvetica', 'normal').setFontSize(6.2).setTextColor(0, 0, 0);
-          
-          // Kolum 1: Petugas
-          doc.text("T.TANGAN   :", 14, lineOffset);
-          doc.text("............................................", 30, lineOffset);
-          doc.text("NAMA           :", 14, lineOffset + 3.8);
-          doc.setFont('helvetica', 'bold');
-          doc.text((m.nama || '').toUpperCase(), 30, lineOffset + 3.8, { maxWidth: 42 });
+          // 8. Nota & Klausa SPRM
+          let textStartY = finalTableY + 3;
+          doc.setFont('helvetica', 'bold').setFontSize(5.8).setTextColor(0, 0, 0);
+          doc.text("Nota: ", 14, textStartY);
           doc.setFont('helvetica', 'normal');
-          doc.text("JAWATAN     : " + (m.pangkat || 'ANGGOTA').toUpperCase(), 14, lineOffset + 7.6);
-          doc.text("TARIKH         :", 14, lineOffset + 11.4);
-          doc.text(`01/${(monthIndex + 1).toString().padStart(2, '0')}/${st.year}`, 30, lineOffset + 11.4);
-          
-          // Kolum 2: Agensi / Premis
-          doc.text("T.TANGAN   :", 75, lineOffset);
-          doc.text("............................................", 91, lineOffset);
-          doc.text("NAMA           :", 75, lineOffset + 3.8);
-          doc.text("............................................", 91, lineOffset + 3.8);
-          doc.text("JAWATAN     :", 75, lineOffset + 7.6);
-          doc.text("............................................", 91, lineOffset + 7.6);
-          doc.text("TARIKH         :", 75, lineOffset + 11.4);
-          doc.text("____/____/________", 91, lineOffset + 11.4);
-          doc.text("COP PREMIS :", 75, lineOffset + 15.2);
-          
-          // Kolum 3: Pejabat RELA Daerah
-          doc.text("T.TANGAN   :", 136, lineOffset);
-          doc.text("............................................", 152, lineOffset);
-          doc.text("NAMA           :", 136, lineOffset + 3.8);
-          doc.text("............................................", 152, lineOffset + 3.8);
-          doc.text("JAWATAN     :", 136, lineOffset + 7.6);
-          doc.text("............................................", 152, lineOffset + 7.6);
-          doc.text("TARIKH         :", 136, lineOffset + 11.4);
-          doc.text("____/____/________", 152, lineOffset + 11.4);
-          doc.text("COP JABATAN :", 136, lineOffset + 15.2);
+          doc.text("Senarai bilangan boleh dipinda mengikut keperluan manakala format asal perlu dikekalkan. Sila garis/ palang ruangan yang tidak berkenaan. Pengiraan insentif penugasan boleh", 21, textStartY);
+          doc.text("dipinda samada mengikut bilangan jam atau hari bertugas.", 14, textStartY + 3.2);
+
+          doc.setFont('helvetica', 'italic').setFontSize(5.7);
+          const sprText1 = "Dengan ini disahkan bahawa segala butiran maklumat dan tuntutan yang dinyatakan di atas adalah benar dan betul. Sekiranya saya mengemukakan";
+          const sprText2 = "tuntutan palsu, saya boleh dikenakan tindakan di bawah Seksyen 18, Akta Suruhanjaya Pencegahan Rasuah Malaysia 2009 [Akta 694] (Kesalahan";
+          const sprText3 = "dengan maksud untuk memperdayakan prinsipal oleh ejen).";
+
+          doc.text(sprText1, 105, textStartY + 8, { align: 'center' });
+          doc.text(sprText2, 105, textStartY + 11.2, { align: 'center' });
+          doc.text(sprText3, 105, textStartY + 14.4, { align: 'center' });
+
+          // 9. 3 Kotak Pengesahan Tandatangan (Tersusun Seimbang & Selari Tegak di Bawah Tajuk Masing-Masing)
+          const sigY = textStartY + 20;
+          doc.setFont('helvetica', 'bold').setFontSize(6.5).setTextColor(0, 0, 0);
+          doc.text('DISEDIAKAN OLEH PETUGAS:', 14, sigY);
+          doc.text('DISEMAK OLEH (PENYELIA PEMOHON/PT/ PPRD):', 72, sigY);
+          doc.text('DISAHKAN OLEH (PRD/ PPRD):', 136, sigY);
+
+          const lineOffset = sigY + 5;
+          doc.setFont('helvetica', 'bold').setFontSize(6.2).setTextColor(0, 0, 0);
+
+          // Kolum 1: Petugas (Tarikh dikosongkan)
+          doc.text("T/TANGAN:", 14, lineOffset);
+          doc.text("NAMA:", 14, lineOffset + 4.5);
+          doc.text("JAWATAN:", 14, lineOffset + 9);
+          doc.text("TARIKH:", 14, lineOffset + 13.5);
+
+          doc.setFont('helvetica', 'normal');
+          doc.text((m.nama || '').toUpperCase(), 32, lineOffset + 4.5, { maxWidth: 36 });
+          doc.text((m.pangkat || 'ANGGOTA').toUpperCase(), 32, lineOffset + 9);
+
+          // Kolum 2: Penyelia / PT / PPRD
+          doc.setFont('helvetica', 'bold');
+          doc.text("T/TANGAN:", 72, lineOffset);
+          doc.text("NAMA:", 72, lineOffset + 4.5);
+          doc.text("JAWATAN:", 72, lineOffset + 9);
+          doc.text("TARIKH:", 72, lineOffset + 13.5);
+
+          // Kolum 3: PRD / PPRD (Bermula selari di X: 136mm)
+          doc.text("T/TANGAN:", 136, lineOffset);
+          doc.text("NAMA:", 136, lineOffset + 4.5);
+          doc.text("JAWATAN:", 136, lineOffset + 9);
+          doc.text("TARIKH:", 136, lineOffset + 13.5);
+          doc.text("CAP JABATAN:", 136, lineOffset + 18);
         });
         
-        const finalFilename = `Borang_Tuntutan_PTJ_${targetMemberId === 'ALL' ? 'Pukal' : targetMemberId}_${cleanedMonthName}_${st.year}.pdf`;
+        const finalFilename = `Lampiran_V2_${targetMemberId === 'ALL' ? 'Pukal' : targetMemberId}_${cleanedMonthName}_${st.year}.pdf`;
         const pdfDataUri = doc.output('datauristring');
         
         pdfGeneratedData = {
           uri: pdfDataUri,
           filename: finalFilename,
-          title: 'Borang Tuntutan PTJ RELA'
+          title: 'Lampiran V2'
         };
         attemptSend();
       } catch(e) {
         console.error(e);
-        alertMsg('Gagal menjana laporan Borang Tuntutan Individu.', 'error');
+        alertMsg('Gagal menjana laporan Borang Tuntutan Lampiran V2.', 'error');
         window.removeEventListener('message', handleHandshake);
         showLoading(false);
       }
@@ -1940,23 +1961,52 @@
           const smeAmount = isSmeLoc ? (stats.smeAmount || 0) : 0;
           const totalAll = stats.allowance + incAmount + smeAmount;
 
-          // Header Rasmi V2
+          const nbcCustomRates = (function() {
+            try { return JSON.parse(settingsObj.nbc_custom_rates_json || '{}'); } catch(e) { return {}; }
+          })();
+          const incRate = (nbcCustomRates[m.locId] !== undefined)
+            ? parseFloat(nbcCustomRates[m.locId])
+            : parseFloat(settingsObj.nbc_incentive_rate || 30.00);
+          const smeRate = parseFloat(settingsObj.sme_rate_per_hr || 1.00);
+
+          // Pengepala Atas Kanan
+          aoa.push(['', '', '', '', '', '', '', '', 'LAMPIRAN V2']);
           aoa.push(['BORANG TUNTUTAN PEMBAYARAN PTJ RELA']);
           aoa.push(['JABATAN SUKARELAWAN MALAYSIA (RELA)']);
           aoa.push([]);
-          aoa.push(['NEGERI:', 'JOHOR', '', '', 'TEMPAT PENUGASAN:', sectorName]);
-          aoa.push(['DAERAH:', (settingsObj.report_daerah || 'RELA DAERAH BATU PAHAT').toUpperCase(), '', '', 'BULAN:', M_NAMES[st.month-1].toUpperCase()]);
-          aoa.push(['PENUGASAN:', 'KAWALAN KESELAMATAN', '', '', 'TAHUN:', st.year.toString()]);
+
+          aoa.push(['BULAN:', M_NAMES[st.month-1].toUpperCase(), '', 'TAHUN:', st.year.toString(), '', 'Sila tanda (/) yang berkenaan,', '', '']);
+          aoa.push(['DAERAH:', (settingsObj.report_daerah || 'BATU PAHAT').toUpperCase(), '', 'NEGERI:', 'JOHOR', '', 'PENYELIA RELA', '', '']);
+          aoa.push(['LOKASI PENUGASAN:', sectorName, '', '', '', '', 'ANGGOTA RELA', '', '']);
           aoa.push([]);
-          aoa.push(['NAMA:', (m.nama || '').toUpperCase(), '', '', 'NO. AKAUN:', { v: cleanAkaun, t: 's' }]);
-          aoa.push(['NO. MYKAD:', { v: cleanKp, t: 's' }, '', '', 'NAMA BANK:', (m.bank || '').toUpperCase()]);
-          aoa.push(['NO. AHLI RELA:', { v: cleanNoAhli, t: 's' }, '', '', 'NO. TELEFON:', { v: cleanTel, t: 's' }]);
+
+          aoa.push(['NAMA', ':', (m.nama || '').toUpperCase(), '', '', 'NO AKAUN', ':', { v: cleanAkaun, t: 's' }, '']);
+          aoa.push(['NO. MYKAD', ':', { v: cleanKp, t: 's' }, '', '', 'NAMA BANK', ':', (m.bank || '').toUpperCase(), '']);
+          aoa.push(['NO. AHLI', ':', { v: cleanNoAhli, t: 's' }, '', '', 'NO. TELEFON', ':', { v: cleanTel, t: 's' }, '']);
           aoa.push([]);
-          aoa.push(['BIL.', 'TARIKH', 'WAKTU MASUK', 'T.TANGAN', 'WAKTU KELUAR', 'T.TANGAN', 'JUMLAH JAM', 'CATATAN']);
+
+          // 9 Lajur Jadual
+          aoa.push([
+            'BIL.', 
+            'TARIKH', 
+            'WAKTU MASUK', 
+            'T.TANGAN', 
+            'WAKTU KELUAR', 
+            'T.TANGAN', 
+            'ELAUN PENUGASAN (JUMLAH JAM)', 
+            'INSENTIF PENUGASAN (JUMLAH HARI/JAM)', 
+            'ELAUN PETUGAS SME (JUMLAH JAM)'
+          ]);
           
           for (let d = 1; d <= maxD; d++) {
             const dateStr = `${d.toString().padStart(2, '0')}/${st.month.toString().padStart(2, '0')}/${st.year}`;
             const resolved = resolveShiftTimes(m, d, st.year, st.month, st);
+            let dInc = '';
+            let dSme = '';
+            if (resolved.jam && parseFloat(resolved.jam) > 0) {
+              if (isNbcLoc) dInc = 1;
+              if (isSmeLoc) dSme = parseFloat(resolved.jam);
+            }
             aoa.push([
               d,
               dateStr,
@@ -1964,61 +2014,73 @@
               '',
               resolved.keluar,
               '',
-              resolved.jam,
-              resolved.catatan
+              resolved.jam ? parseFloat(resolved.jam) : '',
+              dInc,
+              dSme
             ]);
           }
           
-          aoa.push(['', '', '', '', '', 'JUMLAH JAM :', stats.hrs, '']);
-          aoa.push(['', '', '', '', '', `JUMLAH ELAUN PENUGASAN (RM ${rateVal.toFixed(2)}/J) :`, `RM ${formatRM(stats.allowance)}`, '']);
-          if (incAmount > 0) {
-            aoa.push(['', '', '', '', '', `JUMLAH INSENTIF HARIAN KOLABORASI :`, `RM ${formatRM(incAmount)}`, '']);
-          }
-          if (smeAmount > 0) {
-            aoa.push(['', '', '', '', '', `JUMLAH ELAUN SME :`, `RM ${formatRM(smeAmount)}`, '']);
-          }
-          aoa.push(['', '', '', '', '', 'JUMLAH KESELURUHAN TUNTUTAN :', `RM ${formatRM(totalAll)}`, '']);
+          const grandJamPokok = stats.hrs;
+          const grandHariInc = isNbcLoc ? stats.dys : 0;
+          const grandJamSme = isSmeLoc ? stats.hrs : 0;
+
+          // 4 Baris Rumusan
+          aoa.push(['JUMLAH HARI/ JAM', '', '', '', '', '', grandJamPokok, grandHariInc, grandJamSme]);
+          aoa.push([
+            'JUMLAH JAM BEKERJA DALAM SEBULAN x KADAR SEJAM (RM9.80/ RM8.00)', 
+            '', '', '', '', '', 
+            `${grandJamPokok} x RM${rateVal.toFixed(2)}`, 
+            `${grandHariInc} x RM${incRate.toFixed(2)}`, 
+            `${grandJamSme} x RM${smeRate.toFixed(2)}`
+          ]);
+          aoa.push(['JUMLAH', '', '', '', '', '', formatRM(stats.allowance), formatRM(incAmount), formatRM(smeAmount)]);
+          aoa.push(['JUMLAH KESELURUHAN', '', '', '', '', '', `RM ${formatRM(totalAll)}`, '', '']);
+
           aoa.push([]);
-          aoa.push(['Dengan ini disahkan bahawa segala butiran maklumat dan tuntutan yang dinyatakan di atas adalah benar dan betul.', '', '', '', '', 'RUANGAN INI UNTUK KEGUNAAN PEJABAT RELA SAHAJA']);
+          aoa.push(['Nota: Senarai bilangan boleh dipinda mengikut keperluan manakala format asal perlu dikekalkan. Sila garis/ palang ruangan yang tidak berkenaan. Pengiraan insentif penugasan boleh dipinda samada mengikut bilangan jam atau hari bertugas.']);
+          aoa.push(['Dengan ini disahkan bahawa segala butiran maklumat dan tuntutan yang dinyatakan di atas adalah benar dan betul. Sekiranya saya mengemukakan tuntutan palsu, saya boleh dikenakan tindakan di bawah Seksyen 18, Akta Suruhanjaya Pencegahan Rasuah Malaysia 2009 [Akta 694] (Kesalahan dengan maksud untuk memperdayakan prinsipal oleh ejen).']);
           aoa.push([]);
-          aoa.push(['DISEDIAKAN OLEH PETUGAS :', '', '', 'DISAHKAN OLEH STAF/PEGAWAI PREMIS/AGENSI :', '', '', 'DISEMAK OLEH (PEJABAT RELA DAERAH) :']);
+
+          // 3 Bahagian Tandatangan
+          aoa.push(['DISEDIAKAN OLEH PETUGAS:', '', '', 'DISEMAK OLEH (PENYELIA PEMOHON/PT/ PPRD):', '', '', 'DISAHKAN OLEH (PRD/ PPRD):', '', '']);
           aoa.push([]);
-          aoa.push(['T.TANGAN : __________________________', '', '', 'T.TANGAN : __________________________', '', '', 'T.TANGAN : __________________________']);
-          aoa.push(['NAMA : ' + (m.nama || '').toUpperCase(), '', '', 'NAMA : __________________________', '', '', 'NAMA : __________________________']);
-          aoa.push(['JAWATAN : ' + (m.pangkat || 'ANGGOTA').toUpperCase(), '', '', 'JAWATAN : __________________________', '', '', 'JAWATAN : __________________________']);
-          aoa.push([`TARIKH : 01/${(st.month).toString().padStart(2, '0')}/${st.year}`, '', '', 'TARIKH : __________________________', '', '', 'TARIKH : __________________________']);
-          aoa.push(['', '', '', 'COP JABATAN :', '', '', 'COP JABATAN :']);
+          aoa.push(['T/TANGAN:', '___________________', '', 'T/TANGAN:', '___________________', '', 'T/TANGAN:', '___________________', '']);
+          aoa.push(['NAMA:', (m.nama || '').toUpperCase(), '', 'NAMA:', '___________________', '', 'NAMA:', '___________________', '']);
+          aoa.push(['JAWATAN:', (m.pangkat || 'ANGGOTA').toUpperCase(), '', 'JAWATAN:', '___________________', '', 'JAWATAN:', '___________________', '']);
+          aoa.push(['TARIKH:', '', '', 'TARIKH:', '____/____/________', '', 'TARIKH:', '____/____/________', '']);
+          aoa.push(['', '', '', '', '', '', 'CAP JABATAN:', '', '']);
           
           const ws = XLSX.utils.aoa_to_sheet(aoa);
           
+          const rBase = 12 + maxD;
           ws['!merges'] = [
-            {s: {r:0, c:0}, e: {r:0, c:7}},
-            {s: {r:1, c:0}, e: {r:1, c:7}},
+            { s: { r: 1, c: 0 }, e: { r: 1, c: 8 } },
+            { s: { r: 2, c: 0 }, e: { r: 2, c: 8 } },
+            { s: { r: 6, c: 1 }, e: { r: 6, c: 4 } },
+            { s: { r: 8, c: 2 }, e: { r: 8, c: 4 } },
+            { s: { r: 9, c: 2 }, e: { r: 9, c: 4 } },
+            { s: { r: 10, c: 2 }, e: { r: 10, c: 4 } },
             
-            {s: {r:3, c:1}, e: {r:3, c:3}},
-            {s: {r:3, c:5}, e: {r:3, c:7}},
-            {s: {r:4, c:1}, e: {r:4, c:3}},
-            {s: {r:4, c:5}, e: {r:4, c:7}},
-            {s: {r:5, c:1}, e: {r:5, c:3}},
-            {s: {r:5, c:5}, e: {r:5, c:7}},
-            
-            {s: {r:7, c:1}, e: {r:7, c:3}},
-            {s: {r:7, c:5}, e: {r:7, c:7}},
-            {s: {r:8, c:1}, e: {r:8, c:3}},
-            {s: {r:8, c:5}, e: {r:8, c:7}},
-            {s: {r:9, c:1}, e: {r:9, c:3}},
-            {s: {r:9, c:5}, e: {r:9, c:7}}
+            { s: { r: rBase, c: 0 }, e: { r: rBase, c: 5 } },
+            { s: { r: rBase + 1, c: 0 }, e: { r: rBase + 1, c: 5 } },
+            { s: { r: rBase + 2, c: 0 }, e: { r: rBase + 2, c: 5 } },
+            { s: { r: rBase + 3, c: 0 }, e: { r: rBase + 3, c: 5 } },
+            { s: { r: rBase + 3, c: 6 }, e: { r: rBase + 3, c: 8 } },
+
+            { s: { r: rBase + 5, c: 0 }, e: { r: rBase + 5, c: 8 } },
+            { s: { r: rBase + 6, c: 0 }, e: { r: rBase + 6, c: 8 } }
           ];
           
           ws['!cols'] = [
-            {wch: 8},
-            {wch: 16},
-            {wch: 16},
-            {wch: 15},
-            {wch: 16},
-            {wch: 15},
-            {wch: 16},
-            {wch: 35}
+            { wch: 6 },
+            { wch: 14 },
+            { wch: 14 },
+            { wch: 12 },
+            { wch: 14 },
+            { wch: 12 },
+            { wch: 22 },
+            { wch: 22 },
+            { wch: 20 }
           ];
           
           let safeSheetName = String(m.nama || '').substring(0, 31).replace(/[\\/?*\[\]]/g, '');
@@ -2033,189 +2095,16 @@
         });
         
         let fileSuffix = targetMemberId === 'ALL' ? 'Pukal' : targetMemberId;
-        const filename = `Borang_Tuntutan_PTJ_${fileSuffix}_${M_SHORT[st.month-1]}_${st.year}.xlsx`;
+        const filename = `Lampiran_V2_Tuntutan_${fileSuffix}_${M_SHORT[st.month-1]}_${st.year}.xlsx`;
         
         XLSX.writeFile(wb, filename);
         
         showLoading(false);
-        alertMsg('Fail Excel Borang Tuntutan PTJ berjaya dimuat turun!');
+        alertMsg('Fail Excel Lampiran V2 berjaya dimuat turun!');
       } catch(e) {
         console.error(e);
         showLoading(false);
-        alertMsg('Gagal menjana fail Excel Borang Tuntutan.', 'error');
-      }
-    }, 50);
-  }
-
-  // =============================================================================================
-  // --- FUNGSI KHAS: JANAAN FAIL EXCEL BAGI BORANG TUNTUTAN INDIVIDU (LAMPIRAN D FORMAT PENUH) ---
-  // =============================================================================================
-  function generateIndividualTuntutanExcel(st, targetMemberId) {
-    showLoading(true);
-    setTimeout(() => {
-      try {
-        let reportLocIds = [];
-        if (st.locId === 'all') {
-          if (st.role === 'admin') {
-            reportLocIds = st.db.locations.map(l => l.id);
-          } else {
-            reportLocIds = st.allowedLocs.split(',');
-          }
-        } else {
-          reportLocIds = [st.locId];
-        }
-        
-        const mems = st.db.members.filter(m => reportLocIds.includes(m.locId));
-        let printMems = [];
-        
-        if (targetMemberId === 'ALL') {
-          printMems = mems.filter((m) => calcMemberStats(m.id, st).hrs > 0);
-        } else {
-          const singleMem = mems.find(m => m.id === targetMemberId);
-          if (singleMem) printMems = [singleMem];
-        }
-        if (printMems.length === 0) {
-          showLoading(false);
-          return alertMsg('Tiada rekod anggota bertugas aktif ditemui untuk borang ini.', 'warning');
-        }
-        
-        const settingsObj = (st.db && st.db.settings) ? st.db.settings : {};
-        const maxD = new Date(st.year, st.month, 0).getDate();
-        const wb = XLSX.utils.book_new();
-        
-        printMems.forEach((m) => {
-          let aoa = [];
-          const stats = calcMemberStats(m.id, st);
-          const sectorName = (st.db.locations.find(l => l.id === m.locId)?.name || 'TIDAK DIKETAHUI').toUpperCase();
-          const cleanNoAhli = String(m.noAhli || m.id || '').replace(/'/g, '').trim();
-
-          aoa.push(['LAMPIRAN D']);
-          aoa.push(['BORANG TUNTUTAN ELAUN PENUGASAN KAWALAN KESELAMATAN']);
-          aoa.push([]);
-          aoa.push(['NEGERI:', 'JOHOR', '', '', 'TEMPAT PENUGASAN:', sectorName]);
-          aoa.push(['DAERAH:', (settingsObj.report_daerah || 'BATU PAHAT').toUpperCase(), '', '', 'BULAN:', M_NAMES[st.month-1].toUpperCase()]);
-          aoa.push(['PENUGASAN:', 'KAWALAN KESELAMATAN', '', '', 'TAHUN:', st.year.toString()]);
-          aoa.push([]);
-          aoa.push(['NAMA:', (m.nama || '').toUpperCase(), '', '', 'NO AKAUN:', { v: String(m.akaun || '').replace(/'/g, '').trim(), t: 's' }]);
-          aoa.push(['NO. MYKAD:', { v: String(m.kp || '').replace(/'/g, '').trim(), t: 's' }, '', '', 'NAMA BANK:', (m.bank || '').toUpperCase()]);
-          aoa.push(['NO. AHLI:', { v: cleanNoAhli, t: 's' }, '', '', 'NO. TELEFON:', { v: String(m.tel || '').replace(/'/g, '').trim(), t: 's' }]);
-          aoa.push([]);
-          aoa.push(['BIL.', 'TARIKH', 'WAKTU MASUK', 'T.TANGAN', 'WAKTU KELUAR', 'T.TANGAN', 'JUMLAH JAM', 'CATATAN']);
-          
-          for (let d = 1; d <= maxD; d++) {
-            const dateStr = `${d.toString().padStart(2, '0')}/${st.month.toString().padStart(2, '0')}/${st.year}`;
-            const resolved = resolveShiftTimes(m, d, st.year, st.month, st);
-            aoa.push([
-              d,
-              dateStr,
-              resolved.masuk,
-              '',
-              resolved.keluar,
-              '',
-              resolved.jam,
-              resolved.catatan
-            ]);
-          }
-          
-          aoa.push(['', '', '', '', '', 'JUMLAH JAM :', stats.hrs, '']);
-          aoa.push(['', '', '', '', '', `JUMLAH JAM BEKERJA DALAM SEBULAN x KADAR SEJAM (RM ${m.kadar.toFixed(2)}) :`, `${stats.hrs} x RM${m.kadar.toFixed(2)}`, '']);
-          aoa.push(['', '', '', '', '', 'JUMLAH :', `RM${formatRM(stats.allowance)}`, '']);
-          aoa.push([]);
-          aoa.push(['Dengan ini disahkan bahawa segala butiran maklumat and tuntutan yang dinyatakan di atas adalah benar and betul.', '', '', '', '', 'RUANGAN INI UNTUK KEGUNAAN PEJABAT RELA SAHAJA']);
-          aoa.push([]);
-          aoa.push(['DISEDIAKAN OLEH PETUGAS :', '', '', 'DISAHKAN OLEH STAF/PEGAWAI PREMIS/AGENSI :', '', '', 'DISEMAK OLEH :']);
-          aoa.push([]);
-          aoa.push(['T.TANGAN : __________________________', '', '', 'T.TANGAN : __________________________', '', '', 'T.TANGAN : __________________________']);
-          aoa.push(['NAMA : ' + (m.nama || '').toUpperCase(), '', '', 'NAMA : __________________________', '', '', 'NAMA : __________________________']);
-          aoa.push(['JAWATAN : PENYELIA / ANGGOTA', '', '', 'JAWATAN : __________________________', '', '', 'JAWATAN : __________________________']);
-          aoa.push([`TARIKH : 01/${(st.month).toString().padStart(2, '0')}/${st.year}`, '', '', 'TARIKH : __________________________', '', '', 'TARIKH : __________________________']);
-          aoa.push(['', '', '', 'COP JABATAN :', '', '', 'COP JABATAN :']);
-          
-          const ws = XLSX.utils.aoa_to_sheet(aoa);
-          
-          ws['!merges'] = [
-            {s: {r:0, c:0}, e: {r:0, c:7}},
-            {s: {r:1, c:0}, e: {r:1, c:7}},
-            
-            {s: {r:3, c:1}, e: {r:3, c:3}},
-            {s: {r:3, c:5}, e: {r:3, c:7}},
-            {s: {r:4, c:1}, e: {r:4, c:3}},
-            {s: {r:4, c:5}, e: {r:4, c:7}},
-            {s: {r:5, c:1}, e: {r:5, c:3}},
-            {s: {r:5, c:5}, e: {r:5, c:7}},
-            
-            {s: {r:7, c:1}, e: {r:7, c:3}},
-            {s: {r:7, c:5}, e: {r:7, c:7}},
-            {s: {r:8, c:1}, e: {r:8, c:3}},
-            {s: {r:8, c:5}, e: {r:8, c:7}},
-            {s: {r:9, c:1}, e: {r:9, c:3}},
-            {s: {r:9, c:5}, e: {r:9, c:7}},
-            
-            {s: {r:11+maxD, c:0}, e: {r:11+maxD, c:4}},
-            {s: {r:12+maxD, c:0}, e: {r:12+maxD, c:4}},
-            {s: {r:13+maxD, c:0}, e: {r:13+maxD, c:4}},
-            
-            {s: {r:15+maxD, c:0}, e: {r:15+maxD, c:4}},
-            {s: {r:15+maxD, c:5}, e: {r:15+maxD, c:7}},
-            
-            {s: {r:17+maxD, c:0}, e: {r:17+maxD, c:2}},
-            {s: {r:17+maxD, c:3}, e: {r:17+maxD, c:5}},
-            {s: {r:17+maxD, c:6}, e: {r:17+maxD, c:7}},
-            
-            {s: {r:19+maxD, c:0}, e: {r:19+maxD, c:2}},
-            {s: {r:19+maxD, c:3}, e: {r:19+maxD, c:5}},
-            {s: {r:19+maxD, c:6}, e: {r:19+maxD, c:7}},
-            
-            {s: {r:20+maxD, c:0}, e: {r:20+maxD, c:2}},
-            {s: {r:20+maxD, c:3}, e: {r:20+maxD, c:5}},
-            {s: {r:20+maxD, c:6}, e: {r:20+maxD, c:7}},
-            
-            {s: {r:21+maxD, c:0}, e: {r:21+maxD, c:2}},
-            {s: {r:21+maxD, c:3}, e: {r:21+maxD, c:5}},
-            {s: {r:21+maxD, c:6}, e: {r:21+maxD, c:7}},
-            
-            {s: {r:22+maxD, c:0}, e: {r:22+maxD, c:2}},
-            {s: {r:22+maxD, c:3}, e: {r:22+maxD, c:5}},
-            {s: {r:22+maxD, c:6}, e: {r:22+maxD, c:7}},
-            
-            {s: {r:23+maxD, c:0}, e: {r:23+maxD, c:2}},
-            {s: {r:23+maxD, c:3}, e: {r:23+maxD, c:5}},
-            {s: {r:23+maxD, c:6}, e: {r:23+maxD, c:7}}
-          ];
-          
-          ws['!cols'] = [
-            {wch: 15},
-            {wch: 25},
-            {wch: 18},
-            {wch: 15},
-            {wch: 25},
-            {wch: 15},
-            {wch: 15},
-            {wch: 35}
-          ];
-          
-          let safeSheetName = String(m.nama || '').substring(0, 31).replace(/[\\/?*\[\]]/g, '');
-          let sheetNameAttempt = safeSheetName;
-          let counter = 1;
-          
-          while(wb.SheetNames.includes(sheetNameAttempt)) {
-            sheetNameAttempt = safeSheetName.substring(0, 28) + "_" + counter;
-            counter++;
-          }
-          XLSX.utils.book_append_sheet(wb, ws, sheetNameAttempt);
-        });
-        
-        let fileSuffix = targetMemberId === 'ALL' ? 'Pukal' : targetMemberId;
-        const filename = `Lampiran_D_Tuntutan_${fileSuffix}_${M_SHORT[st.month-1]}_${st.year}.xlsx`;
-        
-        XLSX.writeFile(wb, filename);
-        
-        showLoading(false);
-        alertMsg('Fail Excel Lampiran D berjaya dimuat turun!');
-      } catch(e) {
-        console.error(e);
-        showLoading(false);
-        alertMsg('Gagal menjana fail Excel Lampiran D.', 'error');
+        alertMsg('Gagal menjana fail Excel Lampiran V2.', 'error');
       }
     }, 50);
   }
