@@ -19,10 +19,16 @@
     
     // Pra-proses semua data tetapan sistem di luar gelung utama
     let customRates = {};
+    let nbcCustomRates = {};
     try {
       customRates = JSON.parse(state.db.settings.ot_custom_rates_json || '{}');
     } catch(e) {
       console.error("Gagal parse ot_custom_rates_json", e);
+    }
+    try {
+      nbcCustomRates = JSON.parse(state.db.settings.nbc_custom_rates_json || '{}');
+    } catch(e) {
+      console.error("Gagal parse nbc_custom_rates_json", e);
     }
 
     state.parsedSettings = {
@@ -30,9 +36,12 @@
       otMaxHrs: parseFloat(state.db.settings.ot_normal_max_hrs || 8),
       otRate: parseFloat(state.db.settings.ot_rate_per_hr || 8.00),
       dailyIncRate: parseFloat(state.db.settings.nbc_incentive_rate || 30.00),
+      smeRate: parseFloat(state.db.settings.sme_rate_per_hr || 1.00),
       otLocs: (state.db.settings.ot_enabled_locations || '').split(','),
       enabledLocs: (state.db.settings.nbc_enabled_locations || '').split(','),
-      otCustomRates: customRates
+      smeLocs: (state.db.settings.sme_enabled_locations || '').split(','),
+      otCustomRates: customRates,
+      nbcCustomRates: nbcCustomRates
     };
     
     switch(state.page) {
@@ -52,6 +61,7 @@
   // ENJIN STRUKTUR ATURAN OT PINTAR CAWANGAN (FUTURISTIC CONFIG MATRIX)
   // ==============================================================
   window.tempOtCustomRates = {};
+  window.tempNbcCustomRates = {};
 
   function initOtLocationConfigJS(state) {
     try {
@@ -59,6 +69,78 @@
     } catch(e) {
       window.tempOtCustomRates = {};
     }
+    try {
+      window.tempNbcCustomRates = JSON.parse(state.db.settings.nbc_custom_rates_json || '{}');
+    } catch(e) {
+      window.tempNbcCustomRates = {};
+    }
+  }
+
+  // ==============================================================
+  // FUNGSI PENGENDALI INSENTIF PINTAR MENGIKUT LOKASI
+  // ==============================================================
+  window.toggleNbcLocationJS = function(locId, isChecked) {
+    const rateInputContainer = document.getElementById(`nbc-rate-box-${locId}`);
+    if (rateInputContainer) {
+      if (isChecked) rateInputContainer.classList.remove('hidden');
+      else rateInputContainer.classList.add('hidden');
+    }
+    if (isChecked) {
+      if (window.tempNbcCustomRates[locId] === undefined) {
+        const defaultRate = window.appState.db.settings.nbc_incentive_rate || '30.00';
+        window.tempNbcCustomRates[locId] = parseFloat(defaultRate);
+      }
+    } else {
+      delete window.tempNbcCustomRates[locId];
+    }
+    serializeNbcCustomRatesJS();
+  };
+
+  window.updateNbcRateValJS = function(locId, val) {
+    const rate = parseFloat(val);
+    window.tempNbcCustomRates[locId] = isNaN(rate) ? 0 : rate;
+    serializeNbcCustomRatesJS();
+  };
+
+  window.serializeNbcCustomRatesJS = function() {
+    const hiddenInput = document.getElementById('nbc-custom-rates-json-hidden');
+    if (hiddenInput) {
+      hiddenInput.value = JSON.stringify(window.tempNbcCustomRates);
+    }
+  };
+
+  function renderNbcLocationSelectors(state) {
+    const s = state.db.settings;
+    let nbcCustomRates = {};
+    try {
+      nbcCustomRates = JSON.parse(s.nbc_custom_rates_json || '{}');
+    } catch(e) {
+      nbcCustomRates = {};
+    }
+
+    const nbcEnabledArr = (s.nbc_enabled_locations || '').split(',');
+    const defaultRate = s.nbc_incentive_rate || '30.00';
+
+    return state.db.locations.map(l => {
+      const isChecked = nbcEnabledArr.includes(l.id) ? 'checked' : '';
+      const currentRate = (nbcCustomRates[l.id] !== undefined) ? nbcCustomRates[l.id] : defaultRate;
+
+      return `
+        <div class="p-3.5 bg-white border border-slate-150 rounded-2xl shadow-xs transition-all hover:border-emerald-300">
+          <div class="flex items-center justify-between gap-3">
+            <label class="flex items-center gap-3 cursor-pointer flex-1 min-w-0">
+              <input type="checkbox" name="nbc_loc_${l.id}" value="${l.id}" ${isChecked} onchange="toggleNbcLocationJS('${l.id}', this.checked)" class="w-4 h-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500">
+              <span class="text-xs font-black text-slate-800 uppercase truncate">[${l.short}] ${l.name}</span>
+            </label>
+            <div id="nbc-rate-box-${l.id}" class="${isChecked ? '' : 'hidden'} flex items-center gap-1.5 shrink-0 bg-emerald-50 px-2.5 py-1 rounded-xl border border-emerald-100">
+              <span class="text-[9px] font-black text-emerald-700">RM</span>
+              <input type="number" step="1" min="0" value="${currentRate}" onchange="updateNbcRateValJS('${l.id}', this.value)" class="w-16 px-2 py-0.5 bg-white border border-emerald-200 rounded-lg text-xs font-black text-center text-emerald-800 outline-none focus:ring-2 focus:ring-emerald-400">
+              <span class="text-[8px] font-bold text-emerald-600 uppercase">/Hari</span>
+            </div>
+          </div>
+        </div>
+      `;
+    }).join('');
   }
 
   window.toggleOtLocationJS = function(locId, isChecked) {
@@ -198,7 +280,6 @@
     stats.hrs = Number(stats.hrs.toFixed(2));
     const pendings = getPendingApprovals(state);
     const actives = getActiveWorkers(state);
-    let commandCenterHtml = '';
     const isLocked = state.isMonthLocked();
     const klTimeStr = new Date().toLocaleString("en-US", {timeZone: "Asia/Kuala_Lumpur"});
     const klTime = new Date(klTimeStr);
@@ -307,52 +388,123 @@
           </div>
         </div>`;
     }
-    if (pendings.length > 0) {
-      commandCenterHtml += `<div class="mb-8 p-6 sm:p-8 bg-gradient-to-r from-amber-500 to-orange-500 rounded-[2.5rem] text-white shadow-xl shadow-amber-500/30 relative overflow-hidden"><div class="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/3"></div><div class="relative z-10"><div class="flex items-center gap-4 mb-4"><div class="w-12 h-12 bg-white/20 rounded-2xl flex items-center justify-center animate-pulse"><i class="fas fa-bell text-2xl"></i></div><div><h3 class="text-lg sm:text-xl font-black uppercase tracking-widest leading-tight">Tindakan Diperlukan</h3><p class="text-[10px] font-bold text-amber-100 uppercase tracking-widest mt-1">${pendings.length} Laporan Kendiri Menunggu Pengesahan</p></div></div><div class="grid sm:grid-cols-2 xl:grid-cols-3 gap-4 mt-6">
-      ${pendings.map(p => `<div class="bg-white/10 border ${p.isFraudRisk ? 'border-rose-400/50 bg-rose-500/10' : 'border-white/20'} p-4 rounded-2xl flex items-center justify-between hover:bg-white/20 transition-colors group"><div class="truncate mr-4"><div class="flex items-center gap-2"><p class="text-xs font-black uppercase truncate">${p.nama}</p>${p.isFraudRisk ? `<span class="bg-rose-500 text-white text-[8px] px-1.5 py-0.5 rounded uppercase font-bold animate-pulse" title="Anggota ini tiada jadual kerja hari ini!">AMARAN JADUAL!</span>` : ''}</div><p class="text-[9px] font-bold text-amber-100 uppercase tracking-widest mt-1 bg-amber-900/30 px-2 py-0.5 rounded-md inline-block border border-amber-500/50">${p.day} ${M_SHORT[state.month-1]} &bull; Lapor: ${p.val} JAM ${p.isFraudRisk ? `&bull; Roster: ${p.rosterVal}` : ''}</p></div><div class="flex items-center gap-2 shrink-0"><button onclick="approvePendingJS('${p.key}', '${p.val}')" class="w-10 h-10 bg-white text-amber-600 hover:bg-emerald-500 hover:text-white rounded-xl flex items-center justify-center transition-colors shadow-sm" title="Sahkan"><i class="fas fa-check"></i></button><button onclick="rejectPendingJS('${p.key}')" class="w-10 h-10 bg-white text-amber-600 hover:bg-rose-500 hover:text-white rounded-xl flex items-center justify-center transition-colors shadow-sm" title="Tolak"><i class="fas fa-times"></i></button></div></div>`).join('')}
-      </div></div></div>`;
-    }
-    if (actives.length > 0) {
-      commandCenterHtml += `
-        <div class="mb-8 p-6 sm:p-8 bg-gradient-to-r from-emerald-500 to-teal-600 rounded-[2.5rem] text-white shadow-xl shadow-emerald-500/30 relative overflow-hidden">
-          <div class="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/3"></div>
-          <div class="relative z-10">
-            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
-              <div class="flex items-center gap-4">
-                <div class="w-12 h-12 bg-white/20 rounded-2xl flex items-center justify-center"><i class="fas fa-radar text-2xl animate-pulse"></i></div>
-                <div>
-                  <h3 class="text-lg sm:text-xl font-black tracking-widest leading-tight">Radar Operasi</h3>
-                  <p class="text-[10px] font-bold text-emerald-100 uppercase tracking-widest mt-1">${actives.length} Anggota Di Pos Kawalan</p>
-                </div>
-              </div>
+
+    // MODUL PINTAR: PUSAT PEMANTAUAN LOG QR & GEOFENCE OPERASI
+    let qrMonitorSectionHtml = '';
+    const totalActive = actives.length;
+    const totalPending = pendings.length;
+
+    qrMonitorSectionHtml = `
+      <div class="mb-10 space-y-6">
+        <!-- Pengepala Hab Pemantauan QR -->
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div class="flex items-center gap-3">
+            <div class="w-10 h-10 rounded-2xl bg-indigo-600 text-white flex items-center justify-center shadow-lg shadow-indigo-500/20">
+              <i class="fas fa-satellite-dish text-base animate-pulse"></i>
+            </div>
+            <div>
+              <h3 class="text-base sm:text-lg font-black text-slate-900 uppercase tracking-wide">Pusat Pemantauan QR & Radar Geofence</h3>
+              <p class="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Semakan Integriti Waktu, Kedudukan Lapangan & Serah Tugas</p>
+            </div>
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="px-3 py-1.5 rounded-xl bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-black uppercase flex items-center gap-1.5">
+              <span class="w-2 h-2 rounded-full bg-emerald-500 animate-ping"></span> ${totalActive} Petugas Aktif
+            </span>
+            ${totalPending > 0 ? `
+              <span class="px-3 py-1.5 rounded-xl bg-amber-50 text-amber-700 border border-amber-200 text-[10px] font-black uppercase flex items-center gap-1.5">
+                <i class="fas fa-bell animate-bounce text-amber-500"></i> ${totalPending} Menunggu Pengesahan
+              </span>
+            ` : ''}
+          </div>
+        </div>
+
+        <div class="grid lg:grid-cols-2 gap-6">
+          <!-- KAD A: RADAR BERTUGAS AKTIF LAPANGAN -->
+          <div class="glass-card p-6 sm:p-7 rounded-[2.5rem] border border-slate-200 bg-white space-y-4">
+            <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+              <span class="text-xs font-black uppercase text-slate-800 tracking-wider flex items-center gap-2">
+                <i class="fas fa-user-clock text-emerald-500"></i> Anggota Sedang Bertugas (Clock-In)
+              </span>
               ${actives.some(a => parseFloat(a.hours) > 14) ? `
-                <button onclick="bulkForceClockOutJS()" class="px-4 py-2.5 bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-black uppercase tracking-widest rounded-xl shadow-lg border border-rose-500/50 active:scale-95 transition-all flex items-center gap-2 shrink-0">
-                  <i class="fas fa-eraser animate-bounce"></i> Sapu Bersih Lupa Clock-Out
+                <button onclick="bulkForceClockOutJS()" class="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white text-[9px] font-black uppercase rounded-xl shadow-sm transition-all flex items-center gap-1.5">
+                  <i class="fas fa-eraser"></i> Sapu Bersih Lupa Clock-Out
                 </button>
               ` : ''}
             </div>
-            <div class="grid sm:grid-cols-2 xl:grid-cols-3 gap-4 mt-6">
-              ${actives.map(a => `
-                <div class="bg-white/10 border border-white/20 p-4 rounded-2xl flex items-center justify-between hover:bg-white/20 transition-colors">
-                  <div class="truncate mr-4">
-                    <p class="text-xs font-black uppercase truncate">${a.nama}</p>
-                    <p class="text-[9px] font-bold text-emerald-100 uppercase tracking-widest mt-1"><i class="fas fa-location-dot mr-1"></i> ${a.loc} &bull; Masuk: ${a.inTime}</p>
+
+            <div class="max-h-64 overflow-y-auto hide-scrollbar divide-y divide-slate-100 space-y-2">
+              ${actives.length > 0 ? actives.map(a => `
+                <div class="pt-2.5 pb-2 flex items-center justify-between hover:bg-slate-50/80 rounded-xl px-2 transition-colors">
+                  <div class="truncate mr-3">
+                    <p class="text-xs font-black uppercase text-slate-800 truncate">${a.nama}</p>
+                    <p class="text-[9px] font-bold text-slate-400 uppercase mt-0.5 tracking-wider">
+                      <span class="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md font-black mr-1">${a.loc}</span> Masuk: ${a.inTime}
+                    </p>
                   </div>
-                  <div class="flex items-center gap-3 shrink-0">
-                    <span class="px-3 py-1 bg-white/20 rounded-xl text-[10px] font-black uppercase tracking-widest animate-pulse border border-emerald-400/50">${a.hours} J</span>
-                    <button onclick="forceClockOutJS('${a.key}')" class="w-8 h-8 bg-rose-500 text-white hover:bg-rose-600 rounded-lg flex items-center justify-center transition-colors shadow-sm" title="Paksa Log Keluar">
-                      <i class="fas fa-right-from-bracket text-xs"></i>
+                  <div class="flex items-center gap-2 shrink-0">
+                    <span class="px-2.5 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-xl text-[10px] font-black animate-pulse">${a.hours} Jam</span>
+                    <button onclick="forceClockOutJS('${a.key}')" class="w-8 h-8 rounded-xl bg-rose-50 text-rose-500 hover:bg-rose-600 hover:text-white border border-rose-100 flex items-center justify-center transition-colors" title="Tamatkan Syif (Force Clock-Out)">
+                      <i class="fas fa-right-from-bracket text-[10px]"></i>
                     </button>
                   </div>
-                </div>`).join('')}
+                </div>
+              `).join('') : `
+                <div class="py-12 text-center text-slate-400">
+                  <i class="fas fa-circle-check text-3xl opacity-30 mb-2"></i>
+                  <p class="text-[10px] font-black uppercase tracking-widest">Tiada Sesi Bertugas Yang Sedang Aktif</p>
+                </div>
+              `}
             </div>
           </div>
-        </div>`;
-    }
+
+          <!-- KAD B: LAPOR KENDIRI & NOTA AMARAN GEOFENCE / MASA -->
+          <div class="glass-card p-6 sm:p-7 rounded-[2.5rem] border border-slate-200 bg-white space-y-4">
+            <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+              <span class="text-xs font-black uppercase text-slate-800 tracking-wider flex items-center gap-2">
+                <i class="fas fa-triangle-exclamation text-amber-500"></i> Rekod Menunggu Pengesahan Sesi
+              </span>
+              <span class="text-[9px] font-black text-slate-400 uppercase tracking-widest">${pendings.length} Rekod</span>
+            </div>
+
+            <div class="max-h-64 overflow-y-auto hide-scrollbar space-y-2.5">
+              ${pendings.length > 0 ? pendings.map(p => `
+                <div class="p-3.5 bg-slate-50/80 border ${p.isFraudRisk ? 'border-rose-200 bg-rose-50/30' : 'border-slate-200/80'} rounded-2xl flex items-center justify-between gap-3 hover:bg-white transition-all shadow-xs">
+                  <div class="truncate flex-1">
+                    <div class="flex items-center gap-2">
+                      <p class="text-xs font-black text-slate-800 uppercase truncate">${p.nama}</p>
+                      ${p.isFraudRisk ? `<span class="px-2 py-0.5 rounded bg-rose-500 text-white text-[8px] font-black uppercase animate-pulse shrink-0">Bukan Jadual!</span>` : ''}
+                    </div>
+                    <p class="text-[9px] font-bold text-slate-500 uppercase tracking-wider mt-1 leading-relaxed">
+                      ${p.day} ${M_SHORT[state.month-1]} &bull; Lapor: <span class="font-black text-blue-700">${p.val} JAM</span>
+                      <br><span class="text-[8px] font-mono text-slate-400">${p.note || (p.isFraudRisk ? `Jadual Roster: ${p.rosterVal}` : 'Pengesahan Kiosk')}</span>
+                    </p>
+                  </div>
+                  <div class="flex items-center gap-1.5 shrink-0">
+                    <button onclick="approvePendingJS('${p.key}', '${p.val}')" class="w-9 h-9 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white flex items-center justify-center transition-colors shadow-sm" title="Luluskan Kehadiran">
+                      <i class="fas fa-check text-xs"></i>
+                    </button>
+                    <button onclick="rejectPendingJS('${p.key}')" class="w-9 h-9 rounded-xl bg-rose-50 hover:bg-rose-600 text-rose-500 hover:text-white border border-rose-200 flex items-center justify-center transition-colors shadow-sm" title="Tolak & Padam">
+                      <i class="fas fa-times text-xs"></i>
+                    </button>
+                  </div>
+                </div>
+              `).join('') : `
+                <div class="py-12 text-center text-slate-400">
+                  <i class="fas fa-shield-check text-3xl opacity-30 mb-2 text-emerald-500"></i>
+                  <p class="text-[10px] font-black uppercase tracking-widest text-slate-400">Semua Rekod Telah Bersih & Disahkan</p>
+                </div>
+              `}
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+
     c.innerHTML = `
       <div class="page-transition">
         ${auditHeaderHtml}
-        ${commandCenterHtml}
+        ${qrMonitorSectionHtml}
         <div class="flex items-end justify-between mb-8">
           <div>
             <h2 class="text-3xl font-black text-slate-900 tracking-tight">Ringkasan Eksekutif</h2>
@@ -557,6 +709,23 @@
   function buildSettings(c, state) {
     const s = state.db.settings;
     initOtLocationConfigJS(state);
+
+    // Nilai templat lalai mengikut format rasmi tangkap layar terkini
+    const defaultTitles = {
+      title_b_standard: "RUMUSAN TUNTUTAN PEMBAYARAN PTJ RELA",
+      title_b_nbc: "RUMUSAN TUNTUTAN PEMBAYARAN PTJ RELA",
+      title_bank_standard: "RUMUSAN KENYATAAN MAKLUMAT AKAUN BANK ANGGOTA RELA YANG BERTUGAS",
+      title_bank_nbc: "RUMUSAN KENYATAAN MAKLUMAT TUNTUTAN ELAUN SERTA INSENTIF ANGGOTA DALAM PENUGASAN KOLABORASI RELA - PGA BAGI KAWALAN SEMPADAN NEGARA",
+      title_pengakuan_standard: "PENGAKUAN TUNTUTAN ELAUN ANGGOTA RELA BAGI PENUGASAN DI {lokasi}",
+      title_pengakuan_nbc: "PENGAKUAN TUNTUTAN ELAUN SERTA INSENTIF ANGGOTA DALAM PENUGASAN KOLABORASI RELA - PGA BAGI KAWALAN SEMPADAN NEGARA"
+    };
+
+    const val_b_std = s.title_b_standard || defaultTitles.title_b_standard;
+    const val_b_nbc = s.title_b_nbc || defaultTitles.title_b_nbc;
+    const val_bank_std = s.title_bank_standard || defaultTitles.title_bank_standard;
+    const val_bank_nbc = s.title_bank_nbc || defaultTitles.title_bank_nbc;
+    const val_pengakuan_std = s.title_pengakuan_standard || defaultTitles.title_pengakuan_standard;
+    const val_pengakuan_nbc = s.title_pengakuan_nbc || defaultTitles.title_pengakuan_nbc;
     
     c.innerHTML = `
       <div class="page-transition space-y-10">
@@ -586,14 +755,71 @@
                 </div>
               </div>
                              
-              <div class="border-t border-slate-200/60 pt-6 mt-6"><h4 class="text-xs font-black uppercase text-slate-800 tracking-widest mb-4">Tajuk Laporan Dinamik</h4><div class="space-y-4">
-                <div><label class="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-2">Tajuk Lampiran B (Standard)</label><input name="title_b_standard" value="${escapeAttrGlobal(s.title_b_standard)}" class="w-full mt-2 px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold uppercase outline-none focus:bg-white focus:border-blue-400 transition-all"></div>
-                <div><label class="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-2">Tajuk Lampiran B (NBC Kolaborasi)</label><input name="title_b_nbc" value="${escapeAttrGlobal(s.title_b_nbc)}" class="w-full mt-2 px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold uppercase outline-none focus:bg-white focus:border-blue-400 transition-all"></div>
-                <div><label class="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-2">Tajuk Rumusan Bank (Standard)</label><input name="title_bank_standard" value="${escapeAttrGlobal(s.title_bank_standard)}" class="w-full mt-2 px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold uppercase outline-none focus:bg-white focus:border-blue-400 transition-all"></div>
-                <div><label class="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-2">Tajuk Rumusan Bank (NBC Kolaborasi)</label><input name="title_bank_nbc" value="${escapeAttrGlobal(s.title_bank_nbc)}" class="w-full mt-2 px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold uppercase outline-none focus:bg-white focus:border-blue-400 transition-all"></div>
-                <div><label class="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-2">Tajuk Pengakuan (Standard)</label><input name="title_pengakuan_standard" value="${escapeAttrGlobal(s.title_pengakuan_standard)}" class="w-full mt-2 px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold uppercase outline-none focus:bg-white focus:border-blue-400 transition-all"></div>
-                <div><label class="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-2">Tajuk Pengakuan (NBC Kolaborasi)</label><input name="title_pengakuan_nbc" value="${escapeAttrGlobal(s.title_pengakuan_nbc)}" class="w-full mt-2 px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold uppercase outline-none focus:bg-white focus:border-blue-400 transition-all"></div>
-              </div></div>
+              <!-- MODUL PINTAR: ENJIN TAJUK LAPORAN DINAMIK DENGAN TOKEN & LIVE PREVIEW -->
+              <div class="border-t border-slate-200/60 pt-6 mt-6 space-y-6">
+                <div class="flex items-center justify-between">
+                  <div>
+                    <h4 class="text-xs font-black uppercase text-slate-800 tracking-widest">Tajuk Laporan Pintar (Dinamik)</h4>
+                    <p class="text-[9px] text-slate-400 font-bold uppercase mt-0.5">Gunakan token: <code class="text-blue-600 font-mono bg-blue-50 px-1 py-0.5 rounded">{lokasi}</code>, <code class="text-blue-600 font-mono bg-blue-50 px-1 py-0.5 rounded">{daerah}</code>, <code class="text-blue-600 font-mono bg-blue-50 px-1 py-0.5 rounded">{bulan}</code>, <code class="text-blue-600 font-mono bg-blue-50 px-1 py-0.5 rounded">{tahun}</code></p>
+                  </div>
+                  <button type="button" onclick="resetReportTitlesToDefaultJS()" class="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-[9px] font-black uppercase tracking-wider transition-colors" title="Kembalikan kepada templat standard">
+                    <i class="fas fa-rotate-left mr-1"></i> Pulih Lalai
+                  </button>
+                </div>
+
+                <!-- SEKSYEN A: MOD STANDARD (PEJABAT / KAWALAN AWAM) -->
+                <div class="p-4 bg-slate-50/80 rounded-2xl border border-slate-200/80 space-y-4">
+                  <div class="flex items-center gap-2 border-b border-slate-200 pb-2">
+                    <span class="w-2 h-2 rounded-full bg-blue-500"></span>
+                    <span class="text-[10px] font-black uppercase tracking-wider text-slate-700">Mod Standard (Pejabat / Kawalan Awam)</span>
+                  </div>
+
+                  <div>
+                    <label class="text-[9px] font-black uppercase tracking-widest text-slate-400 ml-1">Lampiran B (Standard)</label>
+                    <input id="input-title-b-std" name="title_b_standard" value="${escapeAttrGlobal(val_b_std)}" oninput="updateTitlePreviewJS('b-std', this.value)" class="w-full mt-1.5 px-4 py-3 bg-white border border-slate-200 rounded-xl text-xs font-bold uppercase outline-none focus:border-blue-400 transition-all">
+                    <p class="text-[8px] font-bold text-slate-400 mt-1 ml-1 truncate">Pratonton: <span id="prev-title-b-std" class="text-blue-600 font-semibold uppercase"></span></p>
+                  </div>
+
+                  <div>
+                    <label class="text-[9px] font-black uppercase tracking-widest text-slate-400 ml-1">Rumusan Bank (Standard)</label>
+                    <input id="input-title-bank-std" name="title_bank_standard" value="${escapeAttrGlobal(val_bank_std)}" oninput="updateTitlePreviewJS('bank-std', this.value)" class="w-full mt-1.5 px-4 py-3 bg-white border border-slate-200 rounded-xl text-xs font-bold uppercase outline-none focus:border-blue-400 transition-all">
+                    <p class="text-[8px] font-bold text-slate-400 mt-1 ml-1 truncate">Pratonton: <span id="prev-title-bank-std" class="text-blue-600 font-semibold uppercase"></span></p>
+                  </div>
+
+                  <div>
+                    <label class="text-[9px] font-black uppercase tracking-widest text-slate-400 ml-1">Pengakuan Tuntutan (Standard)</label>
+                    <input id="input-title-pengakuan-std" name="title_pengakuan_standard" value="${escapeAttrGlobal(val_pengakuan_std)}" oninput="updateTitlePreviewJS('pengakuan-std', this.value)" class="w-full mt-1.5 px-4 py-3 bg-white border border-slate-200 rounded-xl text-xs font-bold uppercase outline-none focus:border-blue-400 transition-all">
+                    <p class="text-[8px] font-bold text-slate-400 mt-1 ml-1 truncate">Pratonton: <span id="prev-title-pengakuan-std" class="text-blue-600 font-semibold uppercase"></span></p>
+                  </div>
+                </div>
+
+                <!-- SEKSYEN B: MOD KOLABORASI (NBC / PGA SEMPADAN) -->
+                <div class="p-4 bg-emerald-50/40 rounded-2xl border border-emerald-200/60 space-y-4">
+                  <div class="flex items-center gap-2 border-b border-emerald-200 pb-2">
+                    <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                    <span class="text-[10px] font-black uppercase tracking-wider text-emerald-800">Mod Kolaborasi Khas (PGA / Kawalan Sempadan)</span>
+                  </div>
+
+                  <div>
+                    <label class="text-[9px] font-black uppercase tracking-widest text-slate-400 ml-1">Lampiran B (NBC Kolaborasi)</label>
+                    <input id="input-title-b-nbc" name="title_b_nbc" value="${escapeAttrGlobal(val_b_nbc)}" oninput="updateTitlePreviewJS('b-nbc', this.value)" class="w-full mt-1.5 px-4 py-3 bg-white border border-slate-200 rounded-xl text-xs font-bold uppercase outline-none focus:border-emerald-400 transition-all">
+                    <p class="text-[8px] font-bold text-slate-400 mt-1 ml-1 truncate">Pratonton: <span id="prev-title-b-nbc" class="text-emerald-700 font-semibold uppercase"></span></p>
+                  </div>
+
+                  <div>
+                    <label class="text-[9px] font-black uppercase tracking-widest text-slate-400 ml-1">Rumusan Bank (NBC Kolaborasi)</label>
+                    <input id="input-title-bank-nbc" name="title_bank_nbc" value="${escapeAttrGlobal(val_bank_nbc)}" oninput="updateTitlePreviewJS('bank-nbc', this.value)" class="w-full mt-1.5 px-4 py-3 bg-white border border-slate-200 rounded-xl text-xs font-bold uppercase outline-none focus:border-emerald-400 transition-all">
+                    <p class="text-[8px] font-bold text-slate-400 mt-1 ml-1 truncate">Pratonton: <span id="prev-title-bank-nbc" class="text-emerald-700 font-semibold uppercase"></span></p>
+                  </div>
+
+                  <div>
+                    <label class="text-[9px] font-black uppercase tracking-widest text-slate-400 ml-1">Pengakuan Tuntutan (NBC Kolaborasi)</label>
+                    <input id="input-title-pengakuan-nbc" name="title_pengakuan_nbc" value="${escapeAttrGlobal(val_pengakuan_nbc)}" oninput="updateTitlePreviewJS('pengakuan-nbc', this.value)" class="w-full mt-1.5 px-4 py-3 bg-white border border-slate-200 rounded-xl text-xs font-bold uppercase outline-none focus:border-emerald-400 transition-all">
+                    <p class="text-[8px] font-bold text-slate-400 mt-1 ml-1 truncate">Pratonton: <span id="prev-title-pengakuan-nbc" class="text-emerald-700 font-semibold uppercase"></span></p>
+                  </div>
+                </div>
+              </div>
+
               <div class="pt-6"><button type="submit" class="w-full py-5 bg-gradient-to-r from-slate-800 to-slate-900 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl hover:shadow-2xl hover:-translate-y-1 active:scale-95 transition-all">Simpan Semua Tetapan</button></div>
             </form>
           </div>
@@ -621,15 +847,62 @@
               <div class="p-8 border-b border-slate-100 bg-slate-50/50"><div class="w-12 h-12 bg-emerald-600 text-white rounded-2xl flex items-center justify-center mb-4 shadow-lg"><i class="fas fa-money-check-dollar text-xl"></i></div><span class="text-xs font-black uppercase text-slate-800 tracking-widest">Aturan OT & Insentif Harian (NBC)</span></div>
               <form id="f-ot-config" class="p-8 space-y-5" onsubmit="saveAllSettings(event)">
                 <input type="hidden" name="ot_custom_rates_json" id="ot-custom-rates-json-hidden" value="${escapeAttrGlobal(s.ot_custom_rates_json || '{}')}">
+                <input type="hidden" name="nbc_custom_rates_json" id="nbc-custom-rates-json-hidden" value="${escapeAttrGlobal(s.nbc_custom_rates_json || '{}')}">
                 <div><label class="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-2">Suis Aturan OT Kerja Lebih Masa</label><select name="ot_rule_active" class="w-full mt-2 px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold outline-none cursor-pointer"><option value="true" ${s.ot_rule_active === 'true' ? 'selected' : ''}>AUTO-LOCK BULAN AKTIF</option><option value="false" ${s.ot_rule_active === 'false' ? 'selected' : ''}>TIDAK AKTIF</option></select></div>
                 <div class="grid grid-cols-2 gap-4">
                   <div><label class="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-2">Had Jam Syif Normal</label><input type="number" name="ot_normal_max_hrs" value="${escapeAttrGlobal(s.ot_normal_max_hrs) || 8}" class="w-full mt-2 px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold outline-none"></div>
                   <div><label class="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-2">Kadar Flat OT (RM/Jam)</label><input type="number" step="0.1" name="ot_rate_per_hr" value="${escapeAttrGlobal(s.ot_rate_per_hr) || '8.00'}" class="w-full mt-2 px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold outline-none"></div>
                 </div>
-                <div><label class="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-2">Kadar Insentif Harian Kolaborasi (RM/Hari)</label><input type="number" name="nbc_incentive_rate" value="${escapeAttrGlobal(s.nbc_incentive_rate) || '30.00'}" class="w-full mt-2 px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold outline-none"></div>
-                <div><label class="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-2">Lokasi/Pos Layak Insentif NBC</label><div class="space-y-2 mt-2 bg-slate-50 p-4 rounded-2xl border border-slate-200/60 max-h-48 overflow-y-auto hide-scrollbar">
-                  ${state.db.locations.map(l => { const isChecked = (s.nbc_enabled_locations || '').split(',').includes(l.id) ? 'checked' : ''; return `<label class="flex items-center gap-3 cursor-pointer p-1 rounded-lg hover:bg-white transition-colors"><input type="checkbox" name="nbc_loc_${l.id}" value="${l.id}" ${isChecked} class="w-4 h-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"><span class="text-xs font-bold text-slate-700 uppercase">[${l.short}] ${l.name}</span></label>`; }).join('')}
-                </div></div>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label class="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-2">Insentif Lalai (RM/Hari)</label>
+                    <input type="number" step="1" name="nbc_incentive_rate" value="${escapeAttrGlobal(s.nbc_incentive_rate) || '30.00'}" class="w-full mt-2 px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold outline-none">
+                  </div>
+                  <div>
+                    <label class="text-[10px] font-black uppercase tracking-widest text-emerald-600 ml-2 flex items-center gap-1">
+                      <i class="fas fa-certificate text-amber-500"></i> Kadar SME (RM/Jam)
+                    </label>
+                    <input type="number" step="0.1" min="0" name="sme_rate_per_hr" value="${escapeAttrGlobal(s.sme_rate_per_hr) || '1.00'}" placeholder="Cth: 1.00" class="w-full mt-2 px-6 py-4 bg-emerald-50/40 border border-emerald-200 rounded-2xl text-xs font-black text-slate-800 outline-none focus:bg-white focus:ring-2 focus:ring-emerald-400 transition-all">
+                  </div>
+                </div>
+
+                <!-- PINTAR: MATRIKS KADAR INSENTIF KHUSUS MENGIKUT LOKASI PENUGASAN -->
+                <div class="space-y-3">
+                  <div class="flex items-center justify-between ml-2">
+                    <label class="text-[10px] font-black uppercase tracking-widest text-slate-400 block">Kadar Insentif Mengikut Pos / Lokasi</label>
+                    <span class="text-[8px] font-extrabold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-md uppercase">Pintar</span>
+                  </div>
+                  <div class="space-y-2.5 max-h-52 overflow-y-auto hide-scrollbar bg-slate-50 p-4 rounded-2xl border border-slate-200/60 shadow-inner">
+                    ${renderNbcLocationSelectors(state)}
+                  </div>
+                  <p class="text-[8px] text-slate-400 font-bold uppercase tracking-wide ml-2 leading-relaxed">
+                    *Tandakan pos yang layak dan tetapkan kadar insentif harian khusus bagi pos tersebut.
+                  </p>
+                </div>
+
+                <!-- PINTAR: SENARAI POS/LOKASI LAYAK BAYARAN ELAUN SME -->
+                <div class="space-y-3">
+                  <div class="flex items-center justify-between ml-2">
+                    <label class="text-[10px] font-black uppercase tracking-widest text-amber-600 flex items-center gap-1.5">
+                      <i class="fas fa-shield-halved text-amber-500"></i> Lokasi / Pos Layak Bayaran Elaun SME
+                    </label>
+                    <span class="text-[8px] font-extrabold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md uppercase border border-amber-200">Kawalan SME</span>
+                  </div>
+                  <div class="space-y-2 max-h-48 overflow-y-auto hide-scrollbar bg-amber-50/20 p-4 rounded-2xl border border-amber-200/60 shadow-inner">
+                    ${state.db.locations.map(l => {
+                      const isChecked = (s.sme_enabled_locations || '').split(',').includes(l.id) ? 'checked' : '';
+                      return `
+                        <label class="flex items-center gap-3 cursor-pointer p-2 rounded-xl bg-white border border-slate-150 hover:border-amber-400 transition-all shadow-xs">
+                          <input type="checkbox" name="sme_loc_${l.id}" value="${l.id}" ${isChecked} class="w-4 h-4 rounded border-slate-300 text-amber-600 focus:ring-amber-500">
+                          <span class="text-xs font-black text-slate-800 uppercase">[${l.short}] ${l.name}</span>
+                        </label>
+                      `;
+                    }).join('')}
+                  </div>
+                  <p class="text-[8px] text-slate-400 font-bold uppercase tracking-wide ml-2 leading-relaxed">
+                    *Hanya anggota SME yang bertugas di pos bertanda di atas sahaja akan menerima tambahan elaun SME. Pos lain tidak akan dibayar walaupun anggota berstatus SME.
+                  </p>
+                </div>
                 
                 <!-- MATRIKS KADAR OT PINTAR DAN DINAMIK CAWANGAN -->
                 <div class="space-y-3">
@@ -658,48 +931,122 @@
           </div>
         </div>
       </div>`;
+
+    // Inisialisasi teks pratonton tajuk pintar
+    setTimeout(() => {
+      ['b-std', 'b-nbc', 'bank-std', 'bank-nbc', 'pengakuan-std', 'pengakuan-nbc'].forEach(k => {
+        const inp = document.getElementById(`input-title-${k}`);
+        if (inp) updateTitlePreviewJS(k, inp.value);
+      });
+    }, 50);
   }
+
+  // ==============================================================
+  // ENJIN PEMBANTU TAJUK LAPORAN PINTAR (TOKEN RESOLVER & LIVE PREVIEW)
+  // ==============================================================
+  window.resolveDynamicTitleJS = function(templateStr, locName = '', state = null) {
+    const st = state || window.appState;
+    const daerah = (st && st.db && st.db.settings && st.db.settings.report_daerah) || 'BATU PAHAT';
+    const bulan = (st && st.month) ? M_NAMES[st.month - 1].toUpperCase() : 'OKTOBER';
+    const tahun = (st && st.year) ? String(st.year) : '2026';
+    const lokasi = locName || ((st && st.getActiveLocName) ? st.getActiveLocName() : 'LOKASI');
+
+    return String(templateStr || '')
+      .replace(/{lokasi}|{loc}/gi, lokasi)
+      .replace(/{daerah}/gi, daerah)
+      .replace(/{bulan}/gi, bulan)
+      .replace(/{tahun}/gi, tahun);
+  };
+
+  window.updateTitlePreviewJS = function(fieldKey, rawTemplate) {
+    const prevEl = document.getElementById(`prev-title-${fieldKey}`);
+    if (!prevEl) return;
+    const sampleLoc = fieldKey.includes('nbc') ? 'PGA MINYAK BEKU' : 'JPN YONG PENG';
+    prevEl.textContent = window.resolveDynamicTitleJS(rawTemplate, sampleLoc);
+  };
+
+  window.resetReportTitlesToDefaultJS = function() {
+    const defaults = {
+      'b-std': "RUMUSAN TUNTUTAN PEMBAYARAN PTJ RELA",
+      'b-nbc': "RUMUSAN TUNTUTAN PEMBAYARAN PTJ RELA",
+      'bank-std': "RUMUSAN KENYATAAN MAKLUMAT AKAUN BANK ANGGOTA RELA YANG BERTUGAS",
+      'bank-nbc': "RUMUSAN KENYATAAN MAKLUMAT TUNTUTAN ELAUN SERTA INSENTIF ANGGOTA DALAM PENUGASAN KOLABORASI RELA - PGA BAGI KAWALAN SEMPADAN NEGARA",
+      'pengakuan-std': "PENGAKUAN TUNTUTAN ELAUN ANGGOTA RELA BAGI PENUGASAN DI {lokasi}",
+      'pengakuan-nbc': "PENGAKUAN TUNTUTAN ELAUN SERTA INSENTIF ANGGOTA DALAM PENUGASAN KOLABORASI RELA - PGA BAGI KAWALAN SEMPADAN NEGARA"
+    };
+
+    for (let k in defaults) {
+      const inp = document.getElementById(`input-title-${k}`);
+      if (inp) {
+        inp.value = defaults[k];
+        updateTitlePreviewJS(k, defaults[k]);
+      }
+    }
+    alertMsg('Templat tajuk dikembalikan ke tetapan asal.', 'info');
+  };
 
   // --- KOMPONEN: PREVIEW TUGASAN ---
   function renderPreview(mode, mems, state) {
     const day = mode === 'att' ? state.previewAttDay : state.previewRosDay;
-    const maxD = new Date(state.year, state.month, 0).getDate(); if(day > maxD) return '';
+    const maxD = new Date(state.year, state.month, 0).getDate(); 
+    if (day > maxD) return '';
     let html = '';
     mems.forEach(m => {
-      const loc = state.locId === 'all' ? m.locId : state.locId; const key = `${loc}-${m.id}-${state.year}-${state.month}-${day}`; const val = mode === 'att' ? state.db.attendance[key] : state.db.roster[key];
+      const loc = state.locId === 'all' ? m.locId : state.locId; 
+      const key = `${loc}-${m.id}-${state.year}-${state.month}-${day}`; 
+      const val = mode === 'att' ? state.db.attendance[key] : state.db.roster[key];
       if (mode === 'ros') {
-        const v = val || ''; const isOff = v === 'X' || v === 'CUTI' || v === 'OFF'; const syifCat = isOff ? 'OFF' : (v ? v : 'KOSONG'); if (state.rosFilter !== 'ALL' && syifCat !== state.rosFilter) return;
-        if(v) { html += `<div class="p-4 flex justify-between items-center hover:bg-white transition-colors"><div class="flex items-center gap-4"><div class="w-10 h-10 rounded-2xl ${isOff ? 'bg-rose-50 text-rose-600 border border-rose-100' : 'bg-emerald-50 text-emerald-600 border border-emerald-100'} flex items-center justify-center font-black text-sm shadow-sm">${m.nama.charAt(0)}</div><div><p class="text-[11px] font-black text-slate-800 uppercase truncate max-w-[150px] sm:max-w-[250px] tracking-tight">${m.nama}</p><p class="text-[9px] text-slate-400 font-bold uppercase mt-0.5 tracking-widest">${m.pangkat}</p></div></div><span class="px-3 py-1.5 ${isOff ? 'bg-rose-100 text-rose-700' : 'bg-emerald-100 text-emerald-700'} rounded-xl text-[9px] font-black uppercase tracking-widest shadow-sm">${v}</span></div>`; }
+        const v = val || ''; 
+        const isOff = v === 'X' || v === 'CUTI' || v === 'OFF'; 
+        const syifCat = isOff ? 'OFF' : (v ? v : 'KOSONG'); 
+        if (state.rosFilter !== 'ALL' && syifCat !== state.rosFilter) return;
+        if (v) { 
+          html += `
+            <div class="p-4 flex justify-between items-center hover:bg-white transition-colors">
+              <div class="flex items-center gap-4">
+                <div class="w-10 h-10 rounded-2xl ${isOff ? 'bg-rose-50 text-rose-600 border border-rose-100' : 'bg-emerald-50 text-emerald-600 border border-emerald-100'} flex items-center justify-center font-black text-sm shadow-sm">${m.nama.charAt(0)}</div>
+                <div>
+                  <p class="text-[11px] font-black text-slate-800 uppercase truncate max-w-[150px] sm:max-w-[250px] tracking-tight">${m.nama}</p>
+                  <p class="text-[9px] text-slate-400 font-bold uppercase mt-0.5 tracking-widest">${m.pangkat}</p>
+                </div>
+              </div>
+              <span class="px-3 py-1.5 ${isOff ? 'bg-rose-100 text-rose-700' : 'bg-emerald-100 text-emerald-700'} rounded-xl text-[9px] font-black uppercase tracking-widest shadow-sm">${v}</span>
+            </div>`; 
+        }
       } else {
-        if(val && val !== 'X' && val !== 'OFF' && val !== '') {
-           const rosterVal = state.db.roster[key] || '';
-           const resolved = resolveAttendanceDisplay(val, rosterVal);
-           let badgeClass = 'bg-blue-600 text-white';
-           if (resolved.status === 'Aktif') badgeClass = 'bg-emerald-600 text-white animate-pulse';
-           if (resolved.status === 'Menunggu Pengesahan') badgeClass = 'bg-amber-500 text-white';
-           
-           html += `
-             <div class="p-4 flex justify-between items-center hover:bg-white transition-colors">
-               <div class="flex items-center gap-4">
-                 <div class="w-10 h-10 rounded-2xl bg-blue-50 text-blue-600 border border-blue-100 flex items-center justify-center font-black text-sm shadow-sm">${m.nama.charAt(0)}</div>
-                 <div>
-                   <p class="text-[11px] font-black text-slate-800 uppercase truncate max-w-[150px] sm:max-w-[250px] tracking-tight">${m.nama}</p>
-                   <p class="text-[9px] text-slate-400 font-bold uppercase mt-0.5 tracking-widest">${m.pangkat} &bull; <i class="fas fa-clock mr-0.5"></i> ${resolved.inTime} - ${resolved.outTime}</p>
-                 </div>
-               </div>
-               <span class="px-3 py-1.5 ${badgeClass} rounded-xl text-[10px] font-black uppercase tracking-widest shadow-md">${resolved.duration}</span>
-             </div>`;
-         }
+        if (val && val !== 'X' && val !== 'OFF' && val !== '') {
+          const rosterVal = state.db.roster[key] || '';
+          const resolved = resolveAttendanceDisplay(val, rosterVal);
+          let badgeClass = 'bg-blue-600 text-white';
+          if (resolved.status === 'Aktif') badgeClass = 'bg-emerald-600 text-white animate-pulse';
+          if (resolved.status === 'Menunggu Pengesahan') badgeClass = 'bg-amber-500 text-white';
+          
+          html += `
+            <div class="p-4 flex justify-between items-center hover:bg-white transition-colors">
+              <div class="flex items-center gap-4">
+                <div class="w-10 h-10 rounded-2xl bg-blue-50 text-blue-600 border border-blue-100 flex items-center justify-center font-black text-sm shadow-sm">${m.nama.charAt(0)}</div>
+                <div>
+                  <p class="text-[11px] font-black text-slate-800 uppercase truncate max-w-[150px] sm:max-w-[250px] tracking-tight">${m.nama}</p>
+                  <p class="text-[9px] text-slate-400 font-bold uppercase mt-0.5 tracking-widest">${m.pangkat} &bull; <i class="fas fa-clock mr-0.5"></i> ${resolved.inTime} - ${resolved.outTime}</p>
+                </div>
+              </div>
+              <span class="px-3 py-1.5 ${badgeClass} rounded-xl text-[10px] font-black uppercase tracking-widest shadow-md">${resolved.duration}</span>
+            </div>`;
+        }
       }
-    }); return html || `<div class="py-10 text-center opacity-40 uppercase font-black text-xs">Tiada Rekod pada Tarikh Ini</div>`;
+    }); 
+    return html || `<div class="py-10 text-center opacity-40 uppercase font-black text-xs">Tiada Rekod pada Tarikh Ini</div>`;
   }
 
   // Menapis data senarai berasaskan input pengguna
   function filterList(inputId, containerId) {
-    const term = document.getElementById(inputId).value.toLowerCase(); const container = document.getElementById(containerId); if (!container) return;
+    const term = document.getElementById(inputId).value.toLowerCase(); 
+    const container = document.getElementById(containerId); 
+    if (!container) return;
     const items = container.children;
     for (let i = 0; i < items.length; i++) {
-      const item = items[i]; if (item.tagName === 'STYLE' || item.tagName === 'SCRIPT' || item.id === 'no-data-placeholder') continue;
+      const item = items[i]; 
+      if (item.tagName === 'STYLE' || item.tagName === 'SCRIPT' || item.id === 'no-data-placeholder') continue;
       item.style.display = item.innerText.toLowerCase().includes(term) ? '' : 'none';
     }
   }
@@ -707,7 +1054,6 @@
   // Membuka paparan kalendar mini bagi pengubahsuaian pantas (DENGAN RESET MOD PUKAL)
   function openCalendarModalJS(memId, mode, prefillDay = null) {
     const st = window.appState;
-    
     if (mode === 'ros' && st.isRosterLocked() && st.role !== 'admin') {
       return alertMsg('Jadual tugas bulan ini telah dikunci.', 'error');
     }
@@ -727,7 +1073,7 @@
     st.calModal.open = true;
   }
 
-  // Menjana paparan grid hari bagi bulan semasa di modal (DENGAN SERLAHAN MOD PUKAL PREMIUM)
+  // Menjana paparan grid hari bagi bulan semasa di modal (DENGAN SERLAHAN MOD PUKAL PREMIUM & PEMBERSIHAN PAPARAN TEKS JAM BERSIH)
   function renderCalGridJS() {
      const st = window.appState;
      const max = new Date(st.year, st.month, 0).getDate();
@@ -737,7 +1083,7 @@
      let h = '';
      for(let d=1; d<=max; d++) {
        const k = `${loc}-${m.id}-${st.year}-${st.month}-${d}`;
-       const v = st.calModal.mode === 'att' ? st.db.attendance[k] : st.db.roster[k];
+       const rawVal = st.calModal.mode === 'att' ? st.db.attendance[k] : st.db.roster[k];
        
        const isDayLocked = st.calModal.mode === 'att' ? st.isAttendanceLocked(d, m.id) : st.isRosterLocked(d);
        
@@ -746,20 +1092,47 @@
           ? st.calModal.selectedDays.includes(d)
           : st.calModal.selDay === d;
        
-       let cls = 'bg-white border-slate-100 text-slate-400 hover:bg-slate-50';
-       if(v) {
-        cls = st.calModal.mode === 'att' ? 'bg-blue-50 border-blue-200 text-blue-700 font-black' : 'bg-emerald-50 border-emerald-200 text-emerald-700 font-black';
+       // SARI KELUAR NILAI JAM BERSIH (Bersihkan nota panjang GPS/Auto-snap daripada mencemari petak kalendar)
+       let cleanDisplay = '';
+       let hasPending = false;
+       if (rawVal) {
+         if (st.calModal.mode === 'att') {
+           if (rawVal.startsWith('IN:')) {
+             cleanDisplay = 'IN';
+           } else {
+             cleanDisplay = rawVal.split('|')[0].replace('?', '').trim();
+             if (rawVal.includes('?')) hasPending = true;
+           }
+         } else {
+           if (rawVal === 'PAGI') cleanDisplay = 'P';
+           else if (rawVal === 'PETANG') cleanDisplay = 'PT';
+           else if (rawVal === 'MALAM') cleanDisplay = 'M';
+           else if (rawVal === 'OFF' || rawVal === 'CUTI' || rawVal === 'X') cleanDisplay = 'O';
+           else cleanDisplay = rawVal;
+         }
+       }
+
+       let cls = 'bg-white border-slate-150 text-slate-400 hover:bg-slate-50';
+       if(cleanDisplay) {
+         if (hasPending) {
+           cls = 'bg-amber-50 border-amber-300 text-amber-700 font-black animate-pulse';
+         } else {
+           cls = st.calModal.mode === 'att' 
+             ? 'bg-blue-50 border-blue-200 text-blue-700 font-black' 
+             : 'bg-emerald-50 border-emerald-200 text-emerald-700 font-black';
+         }
        }
        
        if(isSel) {
-        cls = st.calModal.mode === 'att' ? 'bg-blue-600 border-blue-600 text-white shadow-xl scale-110 z-10 font-black' : 'bg-emerald-600 border-emerald-600 text-white shadow-xl scale-110 z-10 font-black';
+        cls = st.calModal.mode === 'att' 
+          ? 'bg-blue-600 border-blue-600 text-white shadow-xl scale-105 z-10 font-black' 
+          : 'bg-emerald-600 border-emerald-600 text-white shadow-xl scale-105 z-10 font-black';
        }
        
        if (isDayLocked && st.role !== 'admin') {
          cls += ' opacity-55 cursor-not-allowed bg-slate-100';
        }
        
-       // Gelagat klik dinamik mengikut mod operasi semasa
        let clickAction = '';
        if (isDayLocked && st.role !== 'admin') {
          clickAction = `alertMsg('Sesi hari ini telah dikunci.', 'error')`;
@@ -772,9 +1145,10 @@
        }
        
        h += `
-         <button onclick="${clickAction}" class="aspect-square rounded-2xl border transition-all flex flex-col items-center justify-center shadow-sm ${cls}">
-           <span class="text-[9px] opacity-70 mb-0.5">${d}</span>
-           <span class="text-[10px] leading-none ${v?'':'hidden'}">${v || ''}</span>
+         <button onclick="${clickAction}" class="aspect-square rounded-2xl border transition-all flex flex-col items-center justify-center p-1 relative shadow-xs ${cls}">
+           <span class="text-[8px] font-bold opacity-60 leading-none mb-0.5">${d}</span>
+           <span class="text-[11px] font-black tracking-tight leading-none">${cleanDisplay}</span>
+           ${hasPending ? `<span class="w-1.5 h-1.5 rounded-full bg-amber-500 absolute top-1 right-1"></span>` : ''}
          </button>
        `;
      }
@@ -790,13 +1164,28 @@
     const isBulk = st.calModal.isBulk;
     const selectedCount = st.calModal.selectedDays.length;
     
-    // Label tajuk tarikh/pilihan pukal
+    // Label tajuk tarikh/pilihan pukal & Maklumat Nota Terperinci jika ada
     const labelEl = document.getElementById('cal-date-label-inject');
     if (labelEl) {
       if (isBulk) {
         labelEl.innerHTML = `PILIHAN PUKAL: <span class="text-blue-600 font-black">${selectedCount} HARI</span> DIPILIH`;
       } else {
-        labelEl.innerHTML = st.calModal.selDay ? `TARIKH: ${st.calModal.selDay} ${M_SHORT[st.month-1]}` : 'SILA PILIH TARIKH';
+        if (st.calModal.selDay) {
+          const m = st.db.members.find(x => x.id === st.calModal.memId);
+          const loc = st.locId === 'all' ? m.locId : st.locId;
+          const k = `${loc}-${m.id}-${st.year}-${st.month}-${st.calModal.selDay}`;
+          const currentVal = (mode === 'att' ? st.db.attendance[k] : st.db.roster[k]) || '';
+          
+          let noteHtml = '';
+          if (currentVal.includes('|')) {
+            const rawNote = currentVal.split('|')[1] || '';
+            noteHtml = `<br><span class="text-[8px] font-bold text-slate-500 mt-1 inline-block bg-slate-200/60 px-2.5 py-0.5 rounded-md text-left">${rawNote}</span>`;
+          }
+
+          labelEl.innerHTML = `TARIKH: ${st.calModal.selDay} ${M_SHORT[st.month-1]} ${noteHtml}`;
+        } else {
+          labelEl.innerHTML = 'SILA PILIH TARIKH';
+        }
       }
     }
     let html = '';
@@ -832,7 +1221,6 @@
       `;
     }
     if (isBulk) {
-      // Butang Simpan Pukal yang menyerlah
       html += `
         <button id="btn-save-bulk" onclick="saveBulkCalendarEntriesJS()" ${selectedCount === 0 ? 'disabled class="col-span-3 py-4 bg-slate-200 text-slate-400 rounded-2xl font-black text-xs uppercase tracking-widest cursor-not-allowed"' : 'class="col-span-3 py-4 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-lg hover:shadow-xl active:scale-95 transition-all cursor-pointer"'}>
           <i class="fas fa-save mr-2 animate-pulse"></i> SIMPAN REKOD PUKAL
@@ -1103,7 +1491,13 @@
         </div>
 
         <div class="grid grid-cols-2 gap-4">
-          <div><label class="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-2">No. Kad Pengenalan</label><input type="text" name="kp" value="${m.kp}" required maxlength="12" placeholder="Cth: 851012015543" ${readOnlyAttr}></div>
+          <div>
+            <label class="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-2">No. Kad Pengenalan</label>
+            <input type="text" name="kp" id="member-kp-input" oninput="autoFillExistingMemberByKP(this.value)" value="${m.kp}" required maxlength="12" placeholder="Cth: 851012015543" ${readOnlyAttr}>
+            <p id="kp-detected-badge" class="hidden text-[8px] font-bold text-emerald-600 mt-1 ml-1 flex items-center gap-1">
+              <i class="fas fa-magic"></i> Profil dikesan: Butiran telah diisi secara automatik.
+            </p>
+          </div>
           <div><label class="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-2">No. Telefon</label><input type="text" name="tel" value="${m.tel}" required placeholder="Cth: 0127766543" ${readOnlyAttr}></div>
         </div>
         <div class="grid grid-cols-2 gap-4">
@@ -1160,9 +1554,37 @@
         ${readOnly ? '' : `<div class="pt-4"><button type="submit" class="w-full py-5 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl active:scale-95 transition-all">${isNew ? 'Daftar Ahli Baharu' : 'Simpan Perubahan'}</button></div>`}
       </form>`;
     
+    // Fungsi Auto-Fill Pintar sekiranya No KP sudah wujud di lokasi lain
+    window.autoFillExistingMemberByKP = function(inputKp) {
+      if (!isNew) return;
+      const clean = String(inputKp).replace(/[^0-9]/g, '').trim();
+      const badge = document.getElementById('kp-detected-badge');
+      if (clean.length === 12) {
+        const found = st.db.members.find(x => String(x.kp).replace(/[^0-9]/g, '').trim() === clean);
+        if (found) {
+          const form = document.getElementById('f-member');
+          if (form) {
+            if (!form.nama.value) form.nama.value = found.nama || '';
+            if (!form.tel.value) form.tel.value = found.tel || '';
+            if (form.noAhli && !form.noAhli.value) form.noAhli.value = found.noAhli || '';
+            if (form.sme) form.sme.value = found.sme || 'TIDAK';
+            if (form.pangkat) form.pangkat.value = found.pangkat || 'AHLI';
+            if (form.kadar && (!form.kadar.value || form.kadar.value == 8)) form.kadar.value = found.kadar || 8;
+            if (form.bank) form.bank.value = found.bank || 'MAYBANK';
+            if (!form.akaun.value) form.akaun.value = found.akaun || '';
+          }
+          if (badge) badge.classList.remove('hidden');
+          return;
+        }
+      }
+      if (badge) badge.classList.add('hidden');
+    };
+
     if(!readOnly) {
       document.getElementById('f-member').onsubmit = e => {
-        e.preventDefault(); const mObj = Object.fromEntries(new FormData(e.target).entries()); mObj.kadar = parseFloat(mObj.kadar) || 8;
+        e.preventDefault(); 
+        const mObj = Object.fromEntries(new FormData(e.target).entries()); 
+        mObj.kadar = parseFloat(mObj.kadar) || 8;
         mObj.kp = String(mObj.kp).replace(/[^0-9]/g, '').trim(); 
         mObj.tel = String(mObj.tel).replace(/[^0-9]/g, '').trim(); 
         mObj.akaun = String(mObj.akaun).replace(/[^0-9]/g, '').trim();
@@ -1170,7 +1592,15 @@
         mObj.sme = String(mObj.sme || 'TIDAK').toUpperCase();
 
         if (mObj.kp.length !== 12) return alertMsg('Sila isi No KP 12 digit yang sah tanpa sengkang.', 'warning');
-        if (isNew && st.db.members.some(x => String(x.kp).replace(/'/g, '') === mObj.kp)) return alertMsg('Anggota ini sudahpun berdaftar!', 'error');
+        
+        // PINTAR: Semak duplikasi HANYA jika anggota sudah didaftarkan pada CAWANGAN YANG SAMA
+        const isDuplicateInSameLoc = st.db.members.some(x => 
+          String(x.kp).replace(/'/g, '').trim() === mObj.kp && x.locId === mObj.locId && x.id !== mObj.id
+        );
+        if (isDuplicateInSameLoc) {
+          return alertMsg('Anggota ini sudah pun berdaftar di cawangan ini! Tidak boleh bertindih di lokasi yang sama.', 'error');
+        }
+
         showLoading(true);
         if(typeof google !== 'undefined' && google.script) {
           google.script.run.withSuccessHandler((res) => {
@@ -1229,7 +1659,7 @@
 
   // Ditambah input medan pilihan Format Syif Pantas & Jam Manual di dalam borang Cawangan
   function openLocationFormJS(id = null) {
-    const st = window.appState; const isNew = !id; let l = { id: 'L_' + Date.now(), name: '', short: '', format: '8' };
+    const st = window.appState; const isNew = !id; let l = { id: 'L_' + Date.now(), name: '', short: '', format: '8', lat: '', lng: '', radius: 300 };
     if(!isNew) l = st.db.locations.find(x => x.id === id) || l;
     st.formModal.title = isNew ? 'Daftar Cawangan Baharu' : 'Kemaskini Cawangan';
 
@@ -1263,8 +1693,61 @@
             *Jam ini digunakan sebagai had asas kiraan auto-cap QR kiosk dan lalai penugasan cawangan.
           </p>
         </div>
+
+        <!-- MODUL PINTAR: SMART HYBRID GEOFENCING KOORDINAT POS -->
+        <div class="p-4 bg-slate-50 rounded-2xl border border-slate-200/80 space-y-3">
+          <div class="flex items-center justify-between">
+            <label class="text-[10px] font-black uppercase tracking-widest text-slate-600 flex items-center gap-1.5">
+              <i class="fas fa-location-crosshairs text-blue-600"></i> Koordinat Pagar Maya (Geofencing)
+            </label>
+            <button type="button" onclick="getCurrentDeviceCoordsJS()" class="px-2.5 py-1 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded-lg text-[9px] font-extrabold uppercase transition-colors">
+              <i class="fas fa-compass mr-1"></i> GPS Semasa Saya
+            </button>
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="text-[8px] font-black uppercase tracking-widest text-slate-400 ml-1">Latitude</label>
+              <input type="text" id="loc-lat-input" name="lat" value="${escapeAttrGlobal(l.lat)}" placeholder="Cth: 1.854321" class="w-full mt-1 px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-mono font-bold outline-none focus:border-blue-400">
+            </div>
+            <div>
+              <label class="text-[8px] font-black uppercase tracking-widest text-slate-400 ml-1">Longitude</label>
+              <input type="text" id="loc-lng-input" name="lng" value="${escapeAttrGlobal(l.lng)}" placeholder="Cth: 102.932456" class="w-full mt-1 px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-mono font-bold outline-none focus:border-blue-400">
+            </div>
+          </div>
+          <div>
+            <div class="flex items-center justify-between">
+              <label class="text-[8px] font-black uppercase tracking-widest text-slate-400 ml-1">Radius Toleransi Pagar Maya (Meter)</label>
+              <span class="text-[8px] text-slate-400 font-bold font-mono" id="radius-val-label">${l.radius || 300}m</span>
+            </div>
+            <input type="number" step="50" min="100" max="2000" name="radius" value="${l.radius || 300}" oninput="document.getElementById('radius-val-label').textContent = this.value + 'm'" class="w-full mt-1 px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold outline-none focus:border-blue-400">
+          </div>
+          <p class="text-[8px] text-slate-400 font-bold uppercase leading-relaxed">
+            *Biarkan kosong jika lokasi ini tidak memerlukan kawalan semakan GPS. Jika diisi, radius 300 meter adalah disyorkan bagi mengimbangi ketepatan peranti petugas di lapangan.
+          </p>
+        </div>
+
         <button type="submit" class="w-full py-5 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl active:scale-95 transition-all">${isNew ? 'Daftar Cawangan' : 'Simpan Perubahan'}</button>
       </form>`;
+
+    window.getCurrentDeviceCoordsJS = function() {
+      if (!navigator.geolocation) return alertMsg('Pelayar anda tidak menyokong fungsi Geolocation GPS.', 'warning');
+      showLoading(true);
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          showLoading(false);
+          const latInput = document.getElementById('loc-lat-input');
+          const lngInput = document.getElementById('loc-lng-input');
+          if (latInput) latInput.value = pos.coords.latitude.toFixed(6);
+          if (lngInput) lngInput.value = pos.coords.longitude.toFixed(6);
+          alertMsg('Koordinat GPS semasa berjaya dikesan!', 'success');
+        },
+        (err) => {
+          showLoading(false);
+          alertMsg('Gagal mengesan GPS: ' + err.message, 'error');
+        },
+        { enableHighAccuracy: true, timeout: 8000 }
+      );
+    };
 
     window.toggleCustomLocFormatJS = function(presetVal) {
       const container = document.getElementById('loc-format-custom-container');
@@ -1424,14 +1907,18 @@
     } else if(form.id === 'f-ot-config') {
       const nbcLocs = Array.from(form.querySelectorAll('input[name^="nbc_loc_"]:checked')).map(el => el.value).join(',');
       const otLocs = Array.from(form.querySelectorAll('input[name^="ot_loc_"]:checked')).map(el => el.value).join(',');
+      const smeLocs = Array.from(form.querySelectorAll('input[name^="sme_loc_"]:checked')).map(el => el.value).join(',');
       payload = { 
         ot_rule_active: formData.get('ot_rule_active'), 
         ot_normal_max_hrs: formData.get('ot_normal_max_hrs'), 
         ot_rate_per_hr: parseFloat(formData.get('ot_rate_per_hr')).toFixed(2), 
         nbc_incentive_rate: parseFloat(formData.get('nbc_incentive_rate')).toFixed(2), 
+        sme_rate_per_hr: parseFloat(formData.get('sme_rate_per_hr') || 1.00).toFixed(2),
         nbc_enabled_locations: nbcLocs, 
         ot_enabled_locations: otLocs,
-        ot_custom_rates_json: formData.get('ot_custom_rates_json') // Ambil rentetan serialised JSON
+        sme_enabled_locations: smeLocs,
+        ot_custom_rates_json: formData.get('ot_custom_rates_json'),
+        nbc_custom_rates_json: formData.get('nbc_custom_rates_json') // Ambil rentetan serialised JSON insentif pintar
       };
     }
     showLoading(true);
@@ -1484,6 +1971,14 @@
       if (st.role === 'penyelia' && !st.allowedLocs.split(',').includes(locId)) { errorLines.push(`Baris ${index+1}: Sektor [${locId}] di luar jagaan anda.`); return; }
       if(!st.db.locations.some(l => l.id === locId)) { errorLines.push(`Baris ${index+1}: Cawangan [${locId}] tiada dalam sistem.`); return; }
       if(kp.length !== 12) { errorLines.push(`Baris ${index+1}: KP mestilah berjarak 12 digit.`); return; }
+
+      // PINTAR: Semak sekiranya ada duplikasi pada lokasi yang sama di dalam pangkalan sedia ada
+      const alreadyInLoc = st.db.members.some(x => String(x.kp).replace(/[^0-9]/g, '') === kp && x.locId === locId);
+      if (alreadyInLoc) {
+        errorLines.push(`Baris ${index+1}: Anggota (${kp}) sudah pun berdaftar di cawangan [${locId}].`);
+        return;
+      }
+
       tempImportQueue.push({ id: 'M_' + (Date.now() + index), locId, nama, kp, tel, pangkat, kadar, bank, akaun, noAhli, sme });
     });
     if(errorLines.length > 0) {
