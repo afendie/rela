@@ -1,0 +1,1672 @@
+<script>
+  // ==============================================================
+  // 1. ENJIN REKA BENTUK HTML & KOMPONEN DINAMIK (VANILLA RENDERING)
+  // ==============================================================
+  function renderActivePageHTML(state) {
+    const c = document.getElementById('page-content');
+    if (!c) return;
+    c.innerHTML = '';
+    const mems = state.getFilteredMems();
+    
+    /* Membina objek cache pengiraan dan Map pendaftaran O(1) bagi mengelakkan ralat perlumbaan memori */
+    state.statsCache = {};
+    state.membersMap = {};
+    if (state.db && state.db.members) {
+      state.db.members.forEach(m => {
+        state.membersMap[m.id] = m;
+      });
+    }
+    
+    // Pra-proses semua data tetapan sistem di luar gelung utama
+    let customRates = {};
+    try {
+      customRates = JSON.parse(state.db.settings.ot_custom_rates_json || '{}');
+    } catch(e) {
+      console.error("Gagal parse ot_custom_rates_json", e);
+    }
+
+    state.parsedSettings = {
+      otActive: state.db.settings.ot_rule_active === 'true',
+      otMaxHrs: parseFloat(state.db.settings.ot_normal_max_hrs || 8),
+      otRate: parseFloat(state.db.settings.ot_rate_per_hr || 8.00),
+      dailyIncRate: parseFloat(state.db.settings.nbc_incentive_rate || 30.00),
+      otLocs: (state.db.settings.ot_enabled_locations || '').split(','),
+      enabledLocs: (state.db.settings.nbc_enabled_locations || '').split(','),
+      otCustomRates: customRates
+    };
+    
+    switch(state.page) {
+      case 'dashboard': buildDashboard(c, mems, state); break;
+      case 'attendance': buildAttendance(c, mems, state); break;
+      case 'roster': buildRoster(c, mems, state); break;
+      case 'staff': buildStaff(c, mems, state); break;
+      case 'reports': buildReports(c, state); break;
+      case 'settings': buildSettings(c, state); break;
+    }
+  }
+
+  // Escape attributes helper global
+  const escapeAttrGlobal = (val) => String(val || '').replace(/"/g, '&quot;');
+
+  // ==============================================================
+  // ENJIN STRUKTUR ATURAN OT PINTAR CAWANGAN (FUTURISTIC CONFIG MATRIX)
+  // ==============================================================
+  window.tempOtCustomRates = {};
+
+  function initOtLocationConfigJS(state) {
+    try {
+      window.tempOtCustomRates = JSON.parse(state.db.settings.ot_custom_rates_json || '{}');
+    } catch(e) {
+      window.tempOtCustomRates = {};
+    }
+  }
+
+  window.toggleOtLocationJS = function(locId, isChecked) {
+    const panel = document.getElementById(`ot-config-panel-${locId}`);
+    if (panel) {
+      if (isChecked) panel.classList.remove('hidden');
+      else panel.classList.add('hidden');
+    }
+    if (isChecked && !window.tempOtCustomRates[locId]) {
+      window.tempOtCustomRates[locId] = {
+        type: 'flat',
+        flatRate: window.appState.db.settings.ot_rate_per_hr || '8.00',
+        ranks: { PENYELIA: '9.80', AHLI: '8.00', KPR: '8.00', KPRK: '8.00' }
+      };
+    }
+    serializeOtCustomRatesJS();
+  };
+
+  window.changeOtConfigTypeJS = function(locId, type) {
+    if (!window.tempOtCustomRates[locId]) {
+      window.tempOtCustomRates[locId] = { type: 'flat', flatRate: '8.00', ranks: { PENYELIA: '9.80', AHLI: '8.00', KPR: '8.00', KPRK: '8.00' } };
+    }
+    window.tempOtCustomRates[locId].type = type;
+    
+    const flatPanel = document.getElementById(`panel-ot-flat-${locId}`);
+    const rankPanel = document.getElementById(`panel-ot-rank-${locId}`);
+    if (type === 'flat') {
+      flatPanel.classList.remove('hidden');
+      rankPanel.classList.add('hidden');
+    } else {
+      flatPanel.classList.add('hidden');
+      rankPanel.classList.remove('hidden');
+    }
+    serializeOtCustomRatesJS();
+  };
+
+  window.updateOtConfigValJS = function(locId, key, val) {
+    if (!window.tempOtCustomRates[locId]) {
+      window.tempOtCustomRates[locId] = { type: 'flat', flatRate: '8.00', ranks: { PENYELIA: '9.80', AHLI: '8.00', KPR: '8.00', KPRK: '8.00' } };
+    }
+    window.tempOtCustomRates[locId][key] = val;
+    serializeOtCustomRatesJS();
+  };
+
+  window.updateOtConfigRankValJS = function(locId, rank, val) {
+    if (!window.tempOtCustomRates[locId]) {
+      window.tempOtCustomRates[locId] = { type: 'rank', flatRate: '8.00', ranks: { PENYELIA: '9.80', AHLI: '8.00', KPR: '8.00', KPRK: '8.00' } };
+    }
+    if (!window.tempOtCustomRates[locId].ranks) {
+      window.tempOtCustomRates[locId].ranks = { PENYELIA: '9.80', AHLI: '8.00', KPR: '8.00', KPRK: '8.00' };
+    }
+    window.tempOtCustomRates[locId].ranks[rank] = val;
+    serializeOtCustomRatesJS();
+  };
+
+  window.serializeOtCustomRatesJS = function() {
+    const hiddenInput = document.getElementById('ot-custom-rates-json-hidden');
+    if (hiddenInput) {
+      hiddenInput.value = JSON.stringify(window.tempOtCustomRates);
+    }
+  };
+
+  function renderOtLocationSelectors(state) {
+    const s = state.db.settings;
+    let customRates = {};
+    try {
+      customRates = JSON.parse(s.ot_custom_rates_json || '{}');
+    } catch(e) {
+      customRates = {};
+    }
+    
+    const otEnabledArr = (s.ot_enabled_locations || '').split(',');
+    
+    return state.db.locations.map(l => {
+      const isChecked = otEnabledArr.includes(l.id) ? 'checked' : '';
+      const config = customRates[l.id] || { type: 'flat', flatRate: s.ot_rate_per_hr || '8.00', ranks: { PENYELIA: '9.80', AHLI: '8.00', KPR: '8.00', KPRK: '8.00' } };
+      
+      const isFlat = config.type === 'flat' ? 'selected' : '';
+      const isRank = config.type === 'rank' ? 'selected' : '';
+      
+      return `
+        <div class="p-4 bg-white border border-slate-150 rounded-2xl shadow-sm space-y-3">
+          <label class="flex items-center gap-3 cursor-pointer">
+            <input type="checkbox" name="ot_loc_${l.id}" value="${l.id}" ${isChecked} onchange="toggleOtLocationJS('${l.id}', this.checked)" class="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500">
+            <span class="text-xs font-black text-slate-800 uppercase">[${l.short}] ${l.name}</span>
+          </label>
+          
+          <div id="ot-config-panel-${l.id}" class="${isChecked ? '' : 'hidden'} pl-7 pt-2 border-t border-dashed border-slate-100 space-y-3">
+            <div class="flex items-center justify-between gap-4">
+              <span class="text-[9px] font-black uppercase text-slate-400">Aturan Sesi OT</span>
+              <select onchange="changeOtConfigTypeJS('${l.id}', this.value)" class="px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-[10px] font-bold outline-none">
+                <option value="flat" ${isFlat}>Kadar Flat (Sama Rata)</option>
+                <option value="rank" ${isRank}>Kadar Mengikut Pangkat</option>
+              </select>
+            </div>
+            
+            <!-- Flat Panel -->
+            <div id="panel-ot-flat-${l.id}" class="${config.type === 'flat' ? '' : 'hidden'} flex items-center justify-between gap-4">
+              <span class="text-[9px] font-black uppercase text-slate-400">Kadar Jam (RM/Jam)</span>
+              <input type="number" step="0.1" value="${config.flatRate || '8.00'}" onchange="updateOtConfigValJS('${l.id}', 'flatRate', this.value)" class="w-24 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-[10px] font-bold text-center outline-none">
+            </div>
+            
+            <!-- Rank Panel -->
+            <div id="panel-ot-rank-${l.id}" class="${config.type === 'rank' ? '' : 'hidden'} space-y-2 bg-slate-50/50 p-3 rounded-xl border border-slate-150 border-l-2 border-l-emerald-500">
+              <div class="flex items-center justify-between gap-4">
+                <span class="text-[9px] font-black uppercase text-slate-500">Penyelia (RM/Jam)</span>
+                <input type="number" step="0.1" value="${(config.ranks && config.ranks.PENYELIA) || '9.80'}" onchange="updateOtConfigRankValJS('${l.id}', 'PENYELIA', this.value)" class="w-20 px-3 py-1 bg-white border border-slate-200 rounded-lg text-[10px] font-bold text-center outline-none">
+              </div>
+              <div class="flex items-center justify-between gap-4">
+                <span class="text-[9px] font-black uppercase text-slate-500">Ahli (RM/Jam)</span>
+                <input type="number" step="0.1" value="${(config.ranks && config.ranks.AHLI) || '8.00'}" onchange="updateOtConfigRankValJS('${l.id}', 'AHLI', this.value)" class="w-20 px-3 py-1 bg-white border border-slate-200 rounded-lg text-[10px] font-bold text-center outline-none">
+              </div>
+              <div class="flex items-center justify-between gap-4">
+                <span class="text-[9px] font-black uppercase text-slate-500">KPR (RM/Jam)</span>
+                <input type="number" step="0.1" value="${(config.ranks && config.ranks.KPR) || '8.00'}" onchange="updateOtConfigRankValJS('${l.id}', 'KPR', this.value)" class="w-20 px-3 py-1 bg-white border border-slate-200 rounded-lg text-[10px] font-bold text-center outline-none">
+              </div>
+              <div class="flex items-center justify-between gap-4">
+                <span class="text-[9px] font-black uppercase text-slate-500">KPRK (RM/Jam)</span>
+                <input type="number" step="0.1" value="${(config.ranks && config.ranks.KPRK) || '8.00'}" onchange="updateOtConfigRankValJS('${l.id}', 'KPRK', this.value)" class="w-20 px-3 py-1 bg-white border border-slate-200 rounded-lg text-[10px] font-bold text-center outline-none">
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  // --- KOMPONEN: DASHBOARD ---
+  function buildDashboard(c, mems, state) {
+    let stats = { rm: 0, hrs: 0, days: 0, staff: mems.length };
+    mems.forEach(m => {
+       const s = calcMemberStats(m.id, state);
+       stats.rm += s.total;
+       stats.hrs += s.hrs;
+       stats.days += s.dys;
+     });
+    stats.hrs = Number(stats.hrs.toFixed(2));
+    const pendings = getPendingApprovals(state);
+    const actives = getActiveWorkers(state);
+    let commandCenterHtml = '';
+    const isLocked = state.isMonthLocked();
+    const klTimeStr = new Date().toLocaleString("en-US", {timeZone: "Asia/Kuala_Lumpur"});
+    const klTime = new Date(klTimeStr);
+    const currY = klTime.getFullYear();
+    const currM = klTime.getMonth() + 1;
+    const currD = klTime.getDate();
+    
+    const isCurrentMonthExceeded = (state.year === currY && state.month === currM) && currD >= 5;
+    const isManualLocked = state.db.settings[`lock_${state.year}_${state.month}`] === 'true';
+    let auditHeaderHtml = '';
+    
+    if (isLocked) {
+      let sebabKunci = "ARKIB DITUTUP";
+      let keteranganKunci = "Data berada di masa lampau dan telah dimuktamadkan untuk pengauditan kewangan.";
+      if (isManualLocked) {
+        sebabKunci = "KUNCI PENTADBIR";
+        keteranganKunci = "Tuan Pentadbir (TPRD) telah mengunci bulan ini secara manual dari modul Tetapan.";
+      } else if (isCurrentMonthExceeded) {
+        sebabKunci = "AUTO-LOCK (5HB)";
+        keteranganKunci = "Data bulan lepas telah dikunci secara automatik kerana telah melepasi tarikh akhir 5hb semasa.";
+      }
+      auditHeaderHtml = `
+        <div class="mb-8 p-6 sm:p-8 bg-gradient-to-br from-slate-950 via-slate-900 to-rose-950/40 rounded-[2.5rem] text-white border border-rose-500/30 shadow-2xl shadow-rose-950/20 relative overflow-hidden page-transition">
+          <div class="absolute top-0 right-0 w-80 h-80 bg-rose-50/5 rounded-full blur-3xl -translate-y-1/2 translate-x-1/3"></div>
+          <div class="relative z-10 flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
+            <div class="flex items-start gap-5">
+              <div class="w-16 h-16 bg-gradient-to-br from-rose-50 to-red-700 text-white rounded-2xl flex items-center justify-center shadow-xl shadow-rose-500/20 shrink-0 border border-rose-400/30 animate-pulse">
+                <i class="fas fa-shield-halved text-2xl"></i>
+              </div>
+              <div>
+                <div class="flex flex-wrap items-center gap-2">
+                  <h3 class="text-lg font-black uppercase tracking-widest leading-none">Menara Kawalan Audit</h3>
+                  <span class="bg-rose-500/20 border border-rose-500/50 text-rose-400 text-[9px] font-extrabold px-2.5 py-1 rounded-full uppercase tracking-wider animate-pulse flex items-center gap-1">
+                    <span class="w-1.5 h-1.5 rounded-full bg-rose-50"></span> ${sebabKunci}
+                  </span>
+                </div>
+                <p class="text-xs text-rose-200/80 font-bold mt-2 leading-relaxed max-w-2xl">${keteranganKunci}</p>
+                <div class="flex items-center gap-4 mt-3 text-[10px] text-slate-400 font-bold uppercase tracking-wider">
+                  <span><i class="fas fa-calendar-day mr-1 text-rose-500"></i> Rekod: ${M_NAMES[state.month-1].toUpperCase()} ${state.year}</span>
+                  <span class="hidden sm:inline">&bull;</span>
+                  <span><i class="fas fa-fingerprint mr-1 text-rose-500"></i> Kunci Sesi: AKTIF</span>
+                </div>
+              </div>
+            </div>
+            
+            <div class="w-full md:w-auto shrink-0 flex flex-row md:flex-col gap-3 justify-between bg-white/5 border border-white/10 p-4 rounded-2xl">
+              <div class="text-left md:text-right">
+                <p class="text-[8px] font-black text-slate-400 uppercase tracking-widest">Hak Akses Penyelia</p>
+                <p class="text-sm font-black text-rose-400 uppercase tracking-wider mt-1"><i class="fas fa-ban mr-1"></i> Disekat (Read-Only)</p>
+              </div>
+              <div class="h-px bg-white/10 my-1 hidden md:block"></div>
+              <div class="text-left md:text-right">
+                <p class="text-[8px] font-black text-slate-400 uppercase tracking-widest">Override Pentadbir</p>
+                <p class="text-sm font-black text-emerald-400 uppercase tracking-wider mt-1"><i class="fas fa-key mr-1"></i> TPRD Aktif</p>
+              </div>
+            </div>
+          </div>
+        </div>`;
+    } else {
+      let jenisTerbuka = "SESI AKTIF";
+      let descTerbuka = "Borang pengisian jadual roster dan laporan kehadiran sedia menerima kemasukan data harian.";
+      const isRosterLockedNow = state.isRosterLocked();
+      
+      if (isRosterLockedNow && state.year === currY && state.month === currM) {
+        jenisTerbuka = "KAWALAN ROSTER & KEHADIRAN (SELEPAS 5HB)";
+        descTerbuka = "Jadual tugas bulan semasa telah dikunci secara automatik. Penyelia dibenarkan mengedit kehadiran sekiranya terdapat pembetulan jam bertugas sah.";
+      } else if (state.year > currY || (state.year === currY && state.month > currM)) {
+        jenisTerbuka = "PERANCANGAN ROSTER";
+        descTerbuka = "Sesi plot jadual syif masa depan dibuka sepenuhnya. Sila rancang plot penugasan lebih awal.";
+      }
+      auditHeaderHtml = `
+        <div class="mb-8 p-6 sm:p-8 bg-gradient-to-br from-slate-950 via-slate-900 to-emerald-950/30 rounded-[2.5rem] text-white border border-emerald-500/30 shadow-2xl shadow-emerald-950/20 relative overflow-hidden page-transition">
+          <div class="absolute top-0 right-0 w-80 h-80 bg-emerald-50/5 rounded-full blur-3xl -translate-y-1/2 translate-x-1/3"></div>
+          <div class="relative z-10 flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
+            <div class="flex items-start gap-5">
+              <div class="w-16 h-16 bg-gradient-to-br from-emerald-50 to-teal-700 text-white rounded-2xl flex items-center justify-center shadow-xl shadow-emerald-500/20 shrink-0 border border-emerald-400/30">
+                <i class="fas fa-lock-open text-2xl"></i>
+              </div>
+              <div>
+                <div class="flex flex-wrap items-center gap-2">
+                  <h3 class="text-lg font-black uppercase tracking-widest leading-none">Menara Kawalan Audit</h3>
+                  <span class="bg-emerald-500/20 border border-emerald-500/50 text-emerald-400 text-[9px] font-extrabold px-2.5 py-1 rounded-full uppercase tracking-wider flex items-center gap-1">
+                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping"></span> ${jenisTerbuka}
+                  </span>
+                </div>
+                <p class="text-xs text-emerald-200/80 font-bold mt-2 leading-relaxed max-w-2xl">${descTerbuka}</p>
+                <div class="flex items-center gap-4 mt-3 text-[10px] text-slate-400 font-bold uppercase tracking-wider">
+                  <span><i class="fas fa-calendar-day mr-1 text-emerald-500"></i> Rekod: ${M_NAMES[state.month-1].toUpperCase()} ${state.year}</span>
+                  <span class="hidden sm:inline">&bull;</span>
+                  <span><i class="fas fa-hourglass-half mr-1 text-emerald-500"></i> Auto-Lock: 5hb Depan</span>
+                </div>
+              </div>
+            </div>
+            
+            <div class="w-full md:w-auto shrink-0 flex flex-row md:flex-col gap-3 justify-between bg-white/5 border border-white/10 p-4 rounded-2xl">
+              <div class="text-left md:text-right">
+                <p class="text-[8px] font-black text-slate-400 uppercase tracking-widest">Hak Akses Penyelia</p>
+                <p class="text-sm font-black text-emerald-400 uppercase tracking-wider mt-1"><i class="fas fa-edit mr-1"></i> Dibenarkan Tulis</p>
+              </div>
+              <div class="h-px bg-white/10 my-1 hidden md:block"></div>
+              <div class="text-left md:text-right">
+                <p class="text-[8px] font-black text-slate-400 uppercase tracking-widest">Override Pentadbir</p>
+                <p class="text-sm font-black text-emerald-400 uppercase tracking-wider mt-1"><i class="fas fa-key mr-1"></i> TPRD Aktif</p>
+              </div>
+            </div>
+          </div>
+        </div>`;
+    }
+    if (pendings.length > 0) {
+      commandCenterHtml += `<div class="mb-8 p-6 sm:p-8 bg-gradient-to-r from-amber-500 to-orange-500 rounded-[2.5rem] text-white shadow-xl shadow-amber-500/30 relative overflow-hidden"><div class="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/3"></div><div class="relative z-10"><div class="flex items-center gap-4 mb-4"><div class="w-12 h-12 bg-white/20 rounded-2xl flex items-center justify-center animate-pulse"><i class="fas fa-bell text-2xl"></i></div><div><h3 class="text-lg sm:text-xl font-black uppercase tracking-widest leading-tight">Tindakan Diperlukan</h3><p class="text-[10px] font-bold text-amber-100 uppercase tracking-widest mt-1">${pendings.length} Laporan Kendiri Menunggu Pengesahan</p></div></div><div class="grid sm:grid-cols-2 xl:grid-cols-3 gap-4 mt-6">
+      ${pendings.map(p => `<div class="bg-white/10 border ${p.isFraudRisk ? 'border-rose-400/50 bg-rose-500/10' : 'border-white/20'} p-4 rounded-2xl flex items-center justify-between hover:bg-white/20 transition-colors group"><div class="truncate mr-4"><div class="flex items-center gap-2"><p class="text-xs font-black uppercase truncate">${p.nama}</p>${p.isFraudRisk ? `<span class="bg-rose-500 text-white text-[8px] px-1.5 py-0.5 rounded uppercase font-bold animate-pulse" title="Anggota ini tiada jadual kerja hari ini!">AMARAN JADUAL!</span>` : ''}</div><p class="text-[9px] font-bold text-amber-100 uppercase tracking-widest mt-1 bg-amber-900/30 px-2 py-0.5 rounded-md inline-block border border-amber-500/50">${p.day} ${M_SHORT[state.month-1]} &bull; Lapor: ${p.val} JAM ${p.isFraudRisk ? `&bull; Roster: ${p.rosterVal}` : ''}</p></div><div class="flex items-center gap-2 shrink-0"><button onclick="approvePendingJS('${p.key}', '${p.val}')" class="w-10 h-10 bg-white text-amber-600 hover:bg-emerald-500 hover:text-white rounded-xl flex items-center justify-center transition-colors shadow-sm" title="Sahkan"><i class="fas fa-check"></i></button><button onclick="rejectPendingJS('${p.key}')" class="w-10 h-10 bg-white text-amber-600 hover:bg-rose-500 hover:text-white rounded-xl flex items-center justify-center transition-colors shadow-sm" title="Tolak"><i class="fas fa-times"></i></button></div></div>`).join('')}
+      </div></div></div>`;
+    }
+    if (actives.length > 0) {
+      commandCenterHtml += `
+        <div class="mb-8 p-6 sm:p-8 bg-gradient-to-r from-emerald-500 to-teal-600 rounded-[2.5rem] text-white shadow-xl shadow-emerald-500/30 relative overflow-hidden">
+          <div class="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/3"></div>
+          <div class="relative z-10">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
+              <div class="flex items-center gap-4">
+                <div class="w-12 h-12 bg-white/20 rounded-2xl flex items-center justify-center"><i class="fas fa-radar text-2xl animate-pulse"></i></div>
+                <div>
+                  <h3 class="text-lg sm:text-xl font-black tracking-widest leading-tight">Radar Operasi</h3>
+                  <p class="text-[10px] font-bold text-emerald-100 uppercase tracking-widest mt-1">${actives.length} Anggota Di Pos Kawalan</p>
+                </div>
+              </div>
+              ${actives.some(a => parseFloat(a.hours) > 14) ? `
+                <button onclick="bulkForceClockOutJS()" class="px-4 py-2.5 bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-black uppercase tracking-widest rounded-xl shadow-lg border border-rose-500/50 active:scale-95 transition-all flex items-center gap-2 shrink-0">
+                  <i class="fas fa-eraser animate-bounce"></i> Sapu Bersih Lupa Clock-Out
+                </button>
+              ` : ''}
+            </div>
+            <div class="grid sm:grid-cols-2 xl:grid-cols-3 gap-4 mt-6">
+              ${actives.map(a => `
+                <div class="bg-white/10 border border-white/20 p-4 rounded-2xl flex items-center justify-between hover:bg-white/20 transition-colors">
+                  <div class="truncate mr-4">
+                    <p class="text-xs font-black uppercase truncate">${a.nama}</p>
+                    <p class="text-[9px] font-bold text-emerald-100 uppercase tracking-widest mt-1"><i class="fas fa-location-dot mr-1"></i> ${a.loc} &bull; Masuk: ${a.inTime}</p>
+                  </div>
+                  <div class="flex items-center gap-3 shrink-0">
+                    <span class="px-3 py-1 bg-white/20 rounded-xl text-[10px] font-black uppercase tracking-widest animate-pulse border border-emerald-400/50">${a.hours} J</span>
+                    <button onclick="forceClockOutJS('${a.key}')" class="w-8 h-8 bg-rose-500 text-white hover:bg-rose-600 rounded-lg flex items-center justify-center transition-colors shadow-sm" title="Paksa Log Keluar">
+                      <i class="fas fa-right-from-bracket text-xs"></i>
+                    </button>
+                  </div>
+                </div>`).join('')}
+            </div>
+          </div>
+        </div>`;
+    }
+    c.innerHTML = `
+      <div class="page-transition">
+        ${auditHeaderHtml}
+        ${commandCenterHtml}
+        <div class="flex items-end justify-between mb-8">
+          <div>
+            <h2 class="text-3xl font-black text-slate-900 tracking-tight">Ringkasan Eksekutif</h2>
+            <p class="text-xs text-slate-400 font-bold uppercase mt-1">${M_NAMES[state.month-1]} ${state.year}</p>
+          </div>
+        </div>
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6 mb-10"><div class="glass-card p-6 rounded-[2rem] hover:-translate-y-1 transition-transform"><div class="w-12 h-12 bg-gradient-to-br from-blue-500 to-blue-600 text-white rounded-2xl flex items-center justify-center mb-4 shadow-lg shadow-blue-500/30"><i class="fas fa-wallet text-xl"></i></div><p class="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1">Elaun + Insentif (RM)</p><p class="text-xl lg:text-3xl font-black text-slate-800">${formatRM(stats.rm)}</p></div><div class="glass-card p-6 rounded-[2rem] hover:-translate-y-1 transition-transform"><div class="w-12 h-12 bg-gradient-to-br from-purple-50 to-purple-600 text-white rounded-2xl flex items-center justify-center mb-4 shadow-lg shadow-purple-500/30"><i class="fas fa-user-group text-xl"></i></div><p class="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1">Anggota Bertugas</p><p class="text-xl lg:text-3xl font-black text-slate-800">${stats.staff}</p></div><div class="glass-card p-6 rounded-[2rem] hover:-translate-y-1 transition-transform"><div class="w-12 h-12 bg-gradient-to-br from-amber-500 to-amber-600 text-white rounded-2xl flex items-center justify-center mb-4 shadow-lg shadow-amber-500/30"><i class="fas fa-clock text-xl"></i></div><p class="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1">Jumlah Jam</p><p class="text-xl lg:text-3xl font-black text-slate-800">${stats.hrs}</p></div><div class="glass-card p-6 rounded-[2rem] hover:-translate-y-1 transition-transform"><div class="w-12 h-12 bg-gradient-to-br from-emerald-50 to-emerald-600 text-white rounded-2xl flex items-center justify-center mb-4 shadow-lg shadow-emerald-500/30"><i class="fas fa-calendar-day text-xl"></i></div><p class="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1">Hari Kerja</p><p class="text-xl lg:text-3xl font-black text-slate-800">${stats.days}</p></div></div>
+        <div class="glass-card rounded-[2.5rem] overflow-hidden"><div class="p-6 border-b border-slate-100 bg-white/50 flex flex-col sm:flex-row justify-between items-center gap-4"><span class="text-[11px] font-black uppercase text-slate-500 tracking-widest">Perincian Ahli</span><div class="relative w-full sm:w-72"><i class="fas fa-search absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 text-xs"></i><input type="text" id="search-dash" onkeyup="filterList('search-dash', 'list-dash')" placeholder="Tapis Nama..." class="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-xl text-[10px] font-bold uppercase outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-500/10 transition-all shadow-sm"></div></div>
+          <div id="list-dash" class="divide-y divide-slate-100/50 max-h-[50vh] overflow-y-auto hide-scrollbar bg-white/30">
+            ${mems.map(m => { const s = calcMemberStats(m.id, state); return `<div class="p-5 flex items-center justify-between hover:bg-white/80 transition-colors group"><div class="flex items-center gap-4 truncate"><div class="w-12 h-12 rounded-2xl bg-slate-100 border border-slate-200 flex items-center justify-center font-black text-slate-400 group-hover:bg-blue-600 group-hover:text-white group-hover:border-blue-600 transition-all shadow-sm">${m.nama.charAt(0)}</div><div class="truncate"><p class="text-sm font-black text-slate-800 uppercase truncate">${m.nama}</p><p class="text-[10px] text-slate-500 font-bold uppercase mt-1 tracking-wider"><span class="text-blue-600 bg-blue-50 px-2 py-0.5 rounded-md mr-1">${m.pangkat}</span> ${s.hrs} JAM (${s.dys} HARI) <span class="text-purple-600 ml-1">Insentif: RM ${formatRM(s.incentive)}</span></p></div></div><p class="text-sm font-black text-slate-800 bg-slate-100 px-4 py-2 rounded-xl group-hover:bg-emerald-50 group-hover:text-emerald-700 transition-colors">RM ${formatRM(s.total)}</p></div>`; }).join('') || '<p id="no-data-placeholder" class="p-12 text-center opacity-40 uppercase font-black text-xs">Tiada Data Tersedia</p>'}
+          </div>
+        </div>
+      </div>`;
+  }
+
+  // --- KOMPONEN: KEHADIRAN ---
+  function buildAttendance(c, mems, state) {
+    const maxD = new Date(state.year, state.month, 0).getDate(); if(state.previewAttDay > maxD) state.previewAttDay = 1;
+    let daysHtml = ''; for(let d=1; d<=maxD; d++) { const isActive = d === state.previewAttDay; daysHtml += `<button id="att-day-${d}" onclick="window.appState.previewAttDay=${d}; window.appState.renderData();" class="snap-item w-14 h-14 rounded-2xl flex flex-col items-center justify-center font-black transition-all ${isActive ? 'bg-white text-blue-600 shadow-xl scale-105' : 'bg-white/10 text-white/70 hover:bg-white/20 border border-white/5'}"><span class="text-sm">${d}</span><span class="text-[8px] uppercase tracking-widest mt-0.5">${M_SHORT[state.month-1]}</span></button>`; }
+    let hadirCount = 0; mems.forEach(m => { const k = `${state.locId === 'all' ? m.locId : state.locId}-${m.id}-${state.year}-${state.month}-${state.previewAttDay}`; const v = state.db.attendance[k]; if(v && v !== 'X' && v !== 'OFF' && v !== '') hadirCount++; });
+    const totalMems = mems.length; const pctHadir = totalMems === 0 ? 0 : Math.round((hadirCount/totalMems)*100);
+    c.innerHTML = `
+      <div class="page-transition">
+        <div class="bg-gradient-to-br from-blue-600 to-indigo-700 rounded-[2.5rem] p-8 sm:p-10 text-white mb-8 shadow-xl shadow-blue-500/20 relative overflow-hidden"><div class="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/3"></div><div class="relative z-10"><h2 class="text-3xl sm:text-4xl font-black tracking-tight">Log Kehadiran</h2><p class="text-xs font-bold uppercase mt-2 text-blue-200 tracking-widest">Pengurusan Sesi Kerja Masa Nyata</p></div><div class="mt-10"><div class="flex items-center justify-between mb-4"><h3 class="text-[10px] font-bold text-blue-200 uppercase tracking-widest">Pilih Tarikh Semasa:</h3></div><div class="snap-x-container gap-3 pb-4" id="att-scroll-container">${daysHtml}</div></div></div>
+        <div class="glass-card p-8 rounded-[2.5rem] mb-8"><div class="flex justify-between text-[10px] font-black mb-2 uppercase tracking-widest"><span class="text-blue-600">${hadirCount} Hadir (${pctHadir}%)</span><span class="text-slate-400">${totalMems - hadirCount} Tiada Rekod</span></div><div class="w-full h-3 bg-slate-100 rounded-full overflow-hidden flex mb-8 shadow-inner"><div class="h-full bg-gradient-to-r from-blue-500 to-indigo-500 transition-all duration-700" style="width: ${pctHadir}%"></div></div><div class="max-h-[30vh] overflow-y-auto hide-scrollbar divide-y divide-slate-100/50">${renderPreview('att', mems, state)}</div></div>
+        <div class="flex flex-col sm:flex-row gap-4 mb-6"><div class="relative flex-1"><i class="fas fa-search absolute left-5 top-1/2 -translate-y-1/2 text-slate-400"></i><input type="text" id="search-att" onkeyup="filterList('search-att', 'list-att')" placeholder="Tapis Nama..." class="w-full pl-12 pr-4 py-4 bg-white border border-slate-200 rounded-2xl text-xs font-bold uppercase shadow-sm outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-500/10 transition-all"></div></div>
+        <div id="list-att" class="grid sm:grid-cols-2 xl:grid-cols-3 gap-5">
+          ${mems.map(m => {
+            const isLockedNow = state.isAttendanceLocked(state.previewAttDay, m.id);
+            return `<button ${isLockedNow && state.role !== 'admin' ? `onclick="Swal.fire({title:'Audit Lock!', text:'Rekod kehadiran hari ini telah dikunci untuk mengelakkan pemalsuan tuntutan selepas tarikh akhir 5hb.', icon:'warning', customClass:{popup:'rounded-3xl'}})"` : `onclick="openCalendarModalJS('${m.id}', 'att', ${state.previewAttDay})"`} class="glass-card p-6 rounded-[2rem] flex items-center justify-between group hover:border-blue-400 hover:shadow-lg hover:-translate-y-1 transition-all text-left"><div class="truncate pr-4"><p class="text-xs font-black text-slate-800 uppercase mb-2 truncate">${m.nama}</p><span class="px-3 py-1.5 bg-blue-50 text-blue-600 rounded-xl text-[9px] font-bold uppercase tracking-widest border border-blue-100">${calcMemberStats(m.id, state).dys} Hari Direkod</span></div><div class="w-10 h-10 rounded-full bg-slate-50 flex items-center justify-center group-hover:bg-blue-600 transition-colors"><i class="fas ${isLockedNow && state.role !== 'admin' ? 'fa-lock text-rose-300' : 'fa-chevron-right text-slate-300 group-hover:text-white'}"></i></div></button>`;
+          }).join('')}
+        </div>
+      </div>`;
+      setTimeout(() => { const btn = document.getElementById(`att-day-${state.previewAttDay}`); const c = document.getElementById('att-scroll-container'); if(btn && c) { c.scrollTo({left: btn.offsetLeft - c.offsetWidth/2 + btn.offsetWidth/2, behavior: 'smooth'}); } }, 100);
+  }
+
+  // --- KOMPONEN: JADUAL ROSTER ---
+  function buildRoster(c, mems, state) {
+    const maxD = new Date(state.year, state.month, 0).getDate();
+    let syif = { PAGI: 0, PETANG: 0, MALAM: 0, OFF: 0 };
+    mems.forEach(m => {
+       const k = `${state.locId === 'all' ? m.locId : state.locId}-${m.id}-${state.year}-${state.month}-${state.previewRosDay}`;
+       const v = state.db.roster[k] || '';
+       if(v === 'PAGI' || v === 'PETANG' || v === 'MALAM') {
+        syif[v]++;
+       } else {
+        syif.OFF++;
+       }
+    });
+    let daysHtml = '';
+    for(let d=1; d<=maxD; d++) {
+       const isActive = d === state.previewRosDay;
+       daysHtml += `<button id="ros-day-${d}" onclick="window.appState.previewRosDay=${d}; window.appState.renderData();" class="snap-item w-14 h-14 rounded-2xl flex flex-col items-center justify-center font-black transition-all ${isActive ? 'bg-white text-emerald-600 shadow-xl scale-105' : 'bg-white/10 text-white/70 hover:bg-white/20 border border-white/5'}"><span class="text-sm">${d}</span><span class="text-[8px] uppercase tracking-widest mt-0.5">${M_SHORT[state.month-1]}</span></button>`;
+     }
+    const isLockState = state.isRosterLocked() && state.role !== 'admin';
+    const importBtnHtml = isLockState ? '' : `<button onclick="openImportRosterModalJS()" class="px-5 py-3.5 bg-emerald-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-emerald-700 shadow-sm transition-all flex items-center gap-2 shrink-0"><i class="fas fa-upload text-sm"></i> Upload Excel</button>`;
+    c.innerHTML = `
+      <div class="page-transition">
+        <div class="bg-gradient-to-br from-emerald-600 to-teal-700 rounded-[2.5rem] p-8 sm:p-10 text-white mb-8 shadow-xl shadow-emerald-500/20 relative overflow-hidden"><div class="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/3"></div><div class="relative z-10"><h2 class="text-3xl sm:text-4xl font-black tracking-tight">Jadual Syif Bulanan</h2><p class="text-xs font-bold uppercase mt-2 text-emerald-200 tracking-widest">Penugasan & Roster Kerja</p></div><div class="mt-10"><div class="flex items-center justify-between mb-4"><h3 class="text-[10px] font-bold text-emerald-200 uppercase tracking-widest">Pilih Tarikh Semasa:</h3></div><div class="snap-x-container gap-3 pb-4" id="ros-scroll-container">${daysHtml}</div></div></div>
+        <div class="glass-card p-8 rounded-[2.5rem] mb-8"><h3 class="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-6 border-b border-slate-100 pb-4">Ringkasan Syif ${state.previewRosDay} ${M_SHORT[state.month-1]} ${state.rosFilter !== 'ALL' ? `<span class="text-rose-500 ml-2">(Tapis: ${state.rosFilter})</span>` : ''}</h3>
+          <div class="grid grid-cols-4 gap-3 sm:gap-4 mb-8">
+            <button onclick="window.appState.rosFilter = window.appState.rosFilter==='PAGI' ? 'ALL' : 'PAGI'; window.appState.renderData();" class="${state.rosFilter==='PAGI' ? 'ring-2 ring-amber-400 bg-amber-50 shadow-md scale-[1.02] ' : 'bg-white hover:bg-amber-50/50'} py-4 rounded-2xl text-center border border-slate-200 transition-all"><p class="text-[9px] sm:text-[10px] text-amber-600 font-bold uppercase tracking-widest">Pagi</p><p class="text-xl sm:text-2xl font-black text-amber-700 mt-1">${syif.PAGI}</p></button>
+            <button onclick="window.appState.rosFilter = window.appState.rosFilter==='PETANG' ? 'ALL' : 'PETANG'; window.appState.renderData();" class="${state.rosFilter==='PETANG' ? 'ring-2 ring-orange-400 bg-orange-50 shadow-md scale-[1.02] ' : 'bg-white hover:bg-orange-50/50'} py-4 rounded-2xl text-center border border-slate-200 transition-all"><p class="text-[9px] sm:text-[10px] text-orange-600 font-bold uppercase tracking-widest">Petang</p><p class="text-xl sm:text-2xl font-black text-orange-700 mt-1">${syif.PETANG}</p></button>
+            <button onclick="window.appState.rosFilter = window.appState.rosFilter==='MALAM' ? 'ALL' : 'MALAM'; window.appState.renderData();" class="${state.rosFilter==='MALAM' ? 'ring-2 ring-indigo-400 bg-indigo-50 shadow-md scale-[1.02] ' : 'bg-white hover:bg-indigo-50/50'} py-4 rounded-2xl text-center border border-slate-200 transition-all"><p class="text-[9px] sm:text-[10px] text-indigo-600 font-bold uppercase tracking-widest">Malam</p><p class="text-xl sm:text-2xl font-black text-indigo-700 mt-1">${syif.MALAM}</p></button>
+            <button onclick="window.appState.rosFilter = window.appState.rosFilter==='OFF' ? 'ALL' : 'OFF'; window.appState.renderData();" class="${state.rosFilter==='OFF' ? 'ring-2 ring-rose-400 bg-rose-50 shadow-md scale-[1.02] ' : 'bg-white hover:bg-rose-50/50'} py-4 rounded-2xl text-center border border-slate-200 transition-all"><p class="text-[9px] sm:text-[10px] text-rose-600 font-bold uppercase tracking-widest">Off / Cuti</p><p class="text-xl sm:text-2xl font-black text-rose-700 mt-1">${syif.OFF}</p></button>
+          </div>
+          <div class="max-h-[30vh] overflow-y-auto hide-scrollbar divide-y divide-slate-100/50 bg-slate-50/50 rounded-2xl border border-slate-100 p-2">${renderPreview('ros', mems, state)}</div>
+        </div>
+                  
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+          <div class="relative flex-1 max-w-md">
+            <i class="fas fa-search absolute left-5 top-1/2 -translate-y-1/2 text-slate-400"></i>
+            <input type="text" id="search-ros" onkeyup="filterList('search-ros', 'list-ros')" placeholder="Tapis Anggota..." class="w-full pl-12 pr-4 py-4 bg-white border border-slate-200 rounded-2xl text-xs font-bold uppercase shadow-sm outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/10 transition-all">
+          </div>
+          <div class="flex items-center gap-3">
+             ${importBtnHtml}
+             <p class="hidden lg:block text-[9px] font-bold text-slate-500 uppercase tracking-widest bg-white px-5 py-4 rounded-2xl border border-slate-200 shadow-sm"><i class="fas fa-hand-pointer mr-2 text-emerald-500"></i> Klik lajur untuk plot</p>
+          </div>
+        </div>
+        <div class="glass-card rounded-[2.5rem] overflow-hidden mb-8 border border-slate-200 shadow-sm"><div class="overflow-x-auto hide-scrollbar pb-2"><table class="w-full text-left border-collapse text-[10px]">
+          <thead><tr class="bg-slate-50 text-slate-500 uppercase tracking-wider border-b border-slate-200"><th class="p-5 sticky left-0 z-20 bg-slate-50 border-r border-slate-200 min-w-[180px] shadow-[4px_0_10px_-4px_rgba(0,0,0,0.1)]">Nama Petugas</th>${Array.from({length: maxD}, (_, i) => `<th class="p-3 min-w-[44px] text-center border-r border-slate-100 font-black">${i+1}</th>`).join('')}</tr></thead>
+          <tbody class="divide-y divide-slate-100/50" id="list-ros">
+            ${mems.map(m => {
+                let row = `<tr class="hover:bg-slate-50/80 transition-colors"><td class="p-5 sticky left-0 z-20 bg-white group-hover:bg-slate-50 border-r border-slate-100 font-black text-slate-800 uppercase shadow-[4px_0_10px_-4px_rgba(0,0,0,0.1)] truncate max-w-[180px] ${!isLockState ? 'cursor-pointer hover:text-emerald-600' : 'cursor-default opacity-85'}" ${!isLockState ? `onclick="openCalendarModalJS('${m.id}', 'ros')"` : `onclick="Swal.fire({title:'Roster Dikunci', text:'Jadual tugas bulan semasa dikunci selepas 5hb untuk mengelakkan pemalsuan atau modifikasi jadual.', icon:'warning', customClass:{popup:'rounded-3xl'}})"`}>${m.nama}</td>`;
+                for(let d=1; d<=maxD; d++) {
+                  const val = state.db.roster[`${m.locId}-${m.id}-${state.year}-${state.month}-${d}`] || '';
+                  let badge = '';
+                  if(val === 'PAGI') badge = `<div class="w-full h-10 bg-amber-100 text-amber-700 rounded-xl flex items-center justify-center font-black shadow-sm" title="PAGI">P</div>`;
+                  else if(val === 'PETANG') badge = `<div class="w-full h-10 bg-orange-100 text-orange-700 rounded-xl flex items-center justify-center font-black shadow-sm" title="PETANG">PT</div>`;
+                  else if(val === 'MALAM') badge = `<div class="w-full h-10 bg-indigo-100 text-indigo-700 rounded-xl flex items-center justify-center font-black shadow-sm" title="MALAM">M</div>`;
+                  else if(val === 'OFF' || val === 'CUTI' || val === 'X') badge = `<div class="w-full h-10 bg-rose-100 text-rose-600 rounded-xl flex items-center justify-center font-black shadow-sm" title="${val}">O</div>`;
+                  else badge = `<div class="w-full h-10 bg-transparent hover:bg-emerald-50 text-transparent hover:text-emerald-500 rounded-xl flex items-center justify-center font-bold transition-colors border border-dashed border-transparent hover:border-emerald-200"><i class="fas fa-plus text-[10px]"></i></div>`;
+                                  
+                  row += `<td class="p-1 border-r border-slate-50 text-center ${!isLockState ? 'cursor-pointer active:scale-95 transition-transform' : 'opacity-65 cursor-not-allowed'}" ${!isLockState ? `onclick="openCalendarModalJS('${m.id}', 'ros', ${d})"` : `onclick="Swal.fire({title:'Audit Roster Kunci!', text:'Jadual tugas telah dikunci selepas tarikh akhir 5hb semasa.', icon:'warning', customClass:{popup:'rounded-3xl'}})"`}>${badge}</td>`;
+                }
+                row += `</tr>`; return row;
+            }).join('') || '<tr><td colspan="32" class="p-16 text-center opacity-40 uppercase font-black text-xs">Tiada Data Tersedia</td></tr>'}
+          </tbody>
+        </table></div></div>
+      </div>`;
+    setTimeout(() => { const btn = document.getElementById(`ros-day-${state.previewRosDay}`); const c = document.getElementById('ros-scroll-container'); if(btn && c) { c.scrollTo({left: btn.offsetLeft - c.offsetWidth/2 + btn.offsetWidth/2, behavior: 'smooth'}); } }, 200);
+  }
+
+  // --- KOMPONEN: PANGKALAN ANGGOTA ---
+  function buildStaff(c, mems, state) {
+    let totRM = 0; mems.forEach(m => totRM += (m.kadar || 0)); const avgRM = mems.length ? (totRM/mems.length).toFixed(2) : '0.00'; const myLoc = state.locId === 'all' ? 'SEMUA LOKASI' : state.db.locations.find(l=>l.id===state.locId)?.name;
+    const allowMemberCrud = state.role === 'admin' || state.db.settings.allow_supervisor_member_crud === 'true';
+    
+    const showCrudBtns = allowMemberCrud ? `
+      <button onclick="openImportModalJS()" class="px-6 py-4 bg-white border border-slate-200 text-slate-700 hover:text-emerald-600 hover:border-emerald-200 rounded-2xl font-black text-[10px] uppercase shadow-sm hover:shadow-md active:scale-95 transition-all flex items-center justify-center gap-2"><i class="fas fa-file-excel text-emerald-500 text-sm"></i> <span class="hidden sm:inline">Import</span> Excel</button>
+      <button onclick="openMemberFormJS()" class="px-6 py-4 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-2xl font-black text-[10px] uppercase shadow-lg shadow-blue-500/30 hover:shadow-xl active:scale-95 transition-all flex items-center justify-center gap-2"><i class="fas fa-user-plus text-sm"></i> Daftar Baru</button>
+    ` : `
+      <div class="px-5 py-3.5 bg-rose-50 border border-rose-100 rounded-2xl text-[9px] font-black uppercase text-rose-600 tracking-wider flex items-center gap-2 shadow-sm">
+        <i class="fas fa-shield-halved text-sm animate-pulse"></i> Modul Ditutup Untuk Penyelia (Read-Only)
+      </div>
+    `;
+    c.innerHTML = `
+      <div class="page-transition">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-6 mb-8"><div><h2 class="text-3xl font-black text-slate-900 tracking-tight">Pangkalan Anggota</h2><p class="text-xs font-bold text-slate-500 uppercase tracking-widest mt-1">Pengurusan Profil & Kadar Gaji</p></div><div class="flex flex-wrap gap-3 w-full sm:w-auto"><div class="relative flex-1 sm:w-72 min-w-[200px]"><i class="fas fa-search absolute left-5 top-1/2 -translate-y-1/2 text-slate-400"></i><input type="text" id="search-staff" onkeyup="filterList('search-staff', 'list-staff')" placeholder="Cari Nama / KP..." class="w-full pl-12 pr-4 py-4 bg-white border border-slate-200 rounded-2xl text-xs font-bold uppercase shadow-sm outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-500/10 transition-all"></div>${showCrudBtns}</div></div>
+        <div class="grid grid-cols-3 gap-4 sm:gap-6 mb-8"><div class="bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-100 p-6 rounded-[2rem] shadow-sm"><p class="text-[9px] sm:text-[10px] font-black text-blue-500 uppercase tracking-widest mb-2">Jumlah Petugas</p><p class="text-2xl sm:text-4xl font-black text-blue-700">${mems.length}</p></div><div class="bg-gradient-to-br from-emerald-50 to-teal-50 border border-emerald-100 p-6 rounded-[2rem] shadow-sm"><p class="text-[9px] sm:text-[10px] font-black text-emerald-500 uppercase tracking-widest mb-2">Purata Kadar</p><p class="text-2xl sm:text-4xl font-black text-emerald-700"><span class="text-sm">RM</span> ${avgRM}</p></div><div class="bg-gradient-to-br from-purple-50 to-fuchsia-50 border border-purple-100 p-6 rounded-[2rem] shadow-sm overflow-hidden flex flex-col justify-center"><p class="text-[9px] sm:text-[10px] font-black text-purple-500 uppercase tracking-widest mb-2">Tapisan Semasa</p><p class="text-xs sm:text-sm font-black text-purple-700 truncate uppercase leading-tight bg-white/50 p-2 rounded-xl inline-block w-fit max-w-full">${myLoc}</p></div></div>
+        <div id="list-staff" class="grid lg:grid-cols-2 xl:grid-cols-3 gap-5">
+          ${mems.map(m => {
+            const isSME = String(m.sme || '').toUpperCase() === 'YA';
+            const cleanNoAhli = String(m.noAhli || '').replace(/'/g, '').trim();
+            const actionBtns = allowMemberCrud ? `
+              <button onclick="openMemberFormJS('${m.id}')" title="Kemaskini" class="w-8 h-8 rounded-xl bg-slate-50 border border-slate-200 text-slate-400 flex items-center justify-center hover:bg-blue-600 hover:text-white hover:border-blue-600 transition-all shadow-sm"><i class="fas fa-pen text-[10px]"></i></button>
+              ${state.role === 'admin' ? `<button onclick="deleteMemberJS('${m.id}')" title="Padam" class="w-8 h-8 rounded-xl bg-rose-50 border border-rose-100 text-rose-400 flex items-center justify-center hover:bg-rose-600 hover:text-white hover:border-rose-600 transition-all shadow-sm"><i class="fas fa-trash text-[10px]"></i></button>` : ''}
+            ` : `
+              <button onclick="openMemberFormJS('${m.id}', true)" title="Lihat Profil (Lihat Sahaja)" class="w-8 h-8 rounded-xl bg-emerald-50 border border-emerald-100 text-emerald-500 flex items-center justify-center hover:bg-emerald-600 hover:text-white transition-all shadow-sm"><i class="fas fa-eye text-[10px]"></i></button>
+            `;
+            return `
+              <div class="glass-card p-6 rounded-[2rem] flex items-start gap-5 border border-slate-200 group hover:border-blue-300 hover:shadow-xl hover:-translate-y-1 transition-all relative overflow-hidden bg-white">
+                <div class="absolute top-0 right-0 w-24 h-24 bg-gradient-to-bl from-blue-50 to-transparent rounded-bl-full -z-10 opacity-50"></div>
+                <div class="w-14 h-14 shrink-0 rounded-2xl bg-slate-100 border border-slate-200 text-slate-500 flex items-center justify-center font-black text-xl shadow-sm group-hover:bg-blue-600 group-hover:text-white group-hover:border-blue-600 transition-colors">
+                  ${m.nama.charAt(0)}
+                </div>
+                <div class="flex-1 min-w-0 pt-1">
+                  <div class="flex items-center gap-2 pr-12">
+                    <p class="text-sm font-black text-slate-800 truncate uppercase tracking-tight">${m.nama}</p>
+                    ${isSME ? `<span class="px-2 py-0.5 bg-gradient-to-r from-amber-500 to-amber-600 text-white rounded-md text-[8px] font-black uppercase tracking-wider shadow-xs shrink-0">SME</span>` : ''}
+                  </div>
+                  <div class="flex flex-wrap gap-2 mt-2 mb-2">
+                    <span class="px-2 py-1 bg-slate-100 text-slate-600 rounded-lg text-[9px] font-bold uppercase"><i class="fas fa-id-card mr-1 text-slate-400"></i> ${m.kp}</span>
+                    <span class="px-2 py-1 bg-emerald-50 text-emerald-600 rounded-lg text-[9px] font-black uppercase"><i class="fas fa-money-bill mr-1 text-emerald-400"></i> RM ${m.kadar}/J</span>
+                  </div>
+                  ${cleanNoAhli ? `<p class="text-[9px] font-bold text-slate-500 mb-3 truncate"><i class="fas fa-certificate text-blue-500 mr-1"></i> No Ahli: <span class="font-mono text-slate-700 font-extrabold">${cleanNoAhli}</span></p>` : ''}
+                  <div class="flex gap-2 overflow-x-auto hide-scrollbar pb-1">
+                    <span class="px-3 py-1.5 bg-blue-50/50 border border-blue-100 text-blue-700 rounded-xl text-[9px] font-black uppercase tracking-wider">${m.bank}</span>
+                    <span class="px-3 py-1.5 bg-blue-50/50 border border-blue-100 text-blue-700 rounded-xl text-[9px] font-black tracking-widest">${m.akaun}</span>
+                  </div>
+                </div>
+                <div class="absolute top-4 right-4 flex gap-2">${actionBtns}</div>
+              </div>`;
+          }).join('')}
+        </div>
+      </div>`;
+  }
+
+  // --- KOMPONEN: JANAAN LAPORAN PDF ---
+  function buildReports(c, state) {
+    const t = [
+      {id:'B', l:'Lampiran B', d:'Daftar Kedatangan', c:'blue', icon:'fa-clipboard-list'}, 
+      {id:'BANK', l:'Rumusan Bank', d:'Akaun Ahli', c:'purple', icon:'fa-building-columns'}, 
+      {id:'PENGAKUAN', l:'Pengakuan', d:'Tuntutan Elaun', c:'rose', icon:'fa-file-signature'}, 
+      {id:'JADUAL', l:'Jadual Roster', d:'Plot Penugasan', c:'emerald', icon:'fa-calendar-days'},
+      {id:'AFFIN', l:'Lampiran AFFIN', d:'Corporate IBG Batch', c:'amber', icon:'fa-money-check-dollar'},
+      {id:'TUNTUTAN', l:'Borang Tuntutan', d:'Elaun Individu', c:'indigo', icon:'fa-file-invoice-dollar'}
+    ];
+    
+    c.innerHTML = `
+      <div class="page-transition max-w-5xl mx-auto py-4">
+        <div class="mb-12">
+          <h2 class="text-3xl font-black text-slate-900 tracking-tight mb-2">Janaan PDF Pintar</h2>
+          <p class="text-xs font-bold text-slate-500 uppercase tracking-widest">Sistem Penjanaan Dokumen & Laporan Kewangan Rasmi Kerajaan Johor</p>
+        </div>
+        <h3 class="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em] mb-6 flex items-center gap-4">
+          <span class="w-8 h-px bg-slate-200"></span> Senarai Laporan Bulanan (PDF/EXCEL) <span class="flex-1 h-px bg-slate-200"></span>
+        </h3>
+        <div class="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-6 mb-16">
+          ${t.map(i => `
+            <button onclick="generatePDFReport('${i.id}')" class="glass-card p-6 rounded-[2.5rem] group hover:border-${i.c}-300 hover:shadow-2xl hover:shadow-${i.c}-500/20 hover:-translate-y-2 flex flex-col items-start gap-5 transition-all text-left relative overflow-hidden border border-slate-200 bg-white">
+              <div class="absolute -right-6 -top-6 w-28 h-28 bg-${i.c}-50 rounded-full z-0 group-hover:scale-150 transition-transform duration-500"></div>
+              <div class="relative z-10 w-14 h-14 bg-white border border-${i.c}-100 shadow-sm text-${i.c}-600 rounded-2xl flex items-center justify-center text-xl group-hover:bg-${i.c}-600 group-hover:text-white transition-colors">
+                <i class="fas ${i.icon}"></i>
+              </div>
+              <div class="relative z-10">
+                <p class="text-[9px] font-black text-${i.c}-500 uppercase tracking-widest mb-1">${i.d}</p>
+                <h3 class="text-base font-black text-slate-800 uppercase leading-tight">${i.l}</h3>
+              </div>
+              <div class="relative z-10 mt-auto w-full flex justify-end">
+                <div class="w-7 h-7 rounded-full bg-slate-50 flex items-center justify-center group-hover:bg-${i.c}-100 transition-colors text-slate-400 group-hover:text-${i.c}-600">
+                  <i class="fas fa-arrow-right text-[9px]"></i>
+                </div>
+              </div>
+            </button>
+          `).join('')}
+        </div>
+      </div>`;
+  }
+
+  // --- KOMPONEN: TETAPAN SISTEM (ADMIN) ---
+  function buildSettings(c, state) {
+    const s = state.db.settings;
+    initOtLocationConfigJS(state);
+    
+    c.innerHTML = `
+      <div class="page-transition space-y-10">
+         <div><h2 class="text-3xl font-black text-slate-900 tracking-tight">Tetapan Sistem</h2><p class="text-xs font-bold text-slate-500 uppercase tracking-widest mt-1">Konfigurasi Induk Aplikasi</p></div>
+        <div class="grid lg:grid-cols-2 gap-8 items-start">
+          <div class="glass-card rounded-[2.5rem] overflow-hidden lg:row-span-2 shadow-sm border border-slate-200 bg-white">
+            <div class="p-8 border-b border-slate-100 bg-slate-50/50"><div class="w-12 h-12 bg-slate-900 text-white rounded-2xl flex items-center justify-center mb-4 shadow-lg"><i class="fas fa-sliders text-xl"></i></div><span class="text-xs font-black uppercase text-slate-800 tracking-widest">Konfigurasi Laporan & Keselamatan</span></div>
+            <form id="f-settings" class="p-8 space-y-6" onsubmit="saveAllSettings(event)">
+              <div><label class="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-2">Teks Tajuk Daerah (Laporan)</label><input name="report_daerah" value="${escapeAttrGlobal(s.report_daerah)}" required class="w-full mt-2 px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold uppercase outline-none focus:bg-white focus:border-blue-400 transition-all"></div>
+              <div><label class="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-2">Jawatan: Disediakan Oleh</label><input name="report_disediakan" value="${escapeAttrGlobal(s.report_disediakan)}" required class="w-full mt-2 px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold uppercase outline-none focus:bg-white focus:border-blue-400 transition-all"></div>
+              <div><label class="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-2">Jawatan: Disemak Oleh</label><input name="report_disemak" value="${escapeAttrGlobal(s.report_disemak)}" required class="w-full mt-2 px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold uppercase outline-none focus:bg-white focus:border-blue-400 transition-all"></div>
+              <div><label class="text-[10px] font-black uppercase text-slate-400 ml-2">Jawatan: Disahkan Oleh</label><input name="report_disahkan" value="${escapeAttrGlobal(s.report_disahkan)}" required class="w-full mt-2 px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold uppercase outline-none focus:bg-white focus:border-blue-400 transition-all"></div>
+                             
+              <div class="border-t border-slate-200/60 pt-6 mt-6">
+                <h4 class="text-xs font-black uppercase text-slate-800 tracking-widest mb-4 flex items-center gap-2">
+                  <i class="fab fa-github text-slate-600 text-sm"></i> Integrasi Pautan Luar GitHub
+                </h4>
+                <div class="grid gap-5">
+                  <div class="bg-slate-50 p-4 rounded-2xl border border-slate-150 shadow-inner">
+                    <label class="text-[10px] font-black uppercase tracking-widest text-slate-400 block mb-2 ml-1">URL Pengimbas GitHub Pages</label>
+                    <input type="url" name="github_scanner_url" value="${escapeAttrGlobal(s.github_scanner_url)}" placeholder="Cth: https://user.github.io/repo/scanner.html" class="w-full px-5 py-3.5 bg-white border border-slate-200 rounded-xl text-xs font-bold outline-none focus:border-blue-400 focus:bg-white transition-all shadow-sm">
+                  </div>
+                  <div class="bg-slate-50 p-4 rounded-2xl border border-slate-150 shadow-inner">
+                    <label class="text-[10px] font-black uppercase tracking-widest text-slate-400 block mb-2 ml-1">URL Pratonton Laporan GitHub Pages</label>
+                    <input type="url" name="github_preview_url" value="${escapeAttrGlobal(s.github_preview_url)}" placeholder="Cth: https://user.github.io/repo/preview.html" class="w-full px-5 py-3.5 bg-white border border-slate-200 rounded-xl text-xs font-bold outline-none focus:border-blue-400 focus:bg-white transition-all shadow-sm">
+                  </div>
+                </div>
+              </div>
+                             
+              <div class="border-t border-slate-200/60 pt-6 mt-6"><h4 class="text-xs font-black uppercase text-slate-800 tracking-widest mb-4">Tajuk Laporan Dinamik</h4><div class="space-y-4">
+                <div><label class="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-2">Tajuk Lampiran B (Standard)</label><input name="title_b_standard" value="${escapeAttrGlobal(s.title_b_standard)}" class="w-full mt-2 px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold uppercase outline-none focus:bg-white focus:border-blue-400 transition-all"></div>
+                <div><label class="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-2">Tajuk Lampiran B (NBC Kolaborasi)</label><input name="title_b_nbc" value="${escapeAttrGlobal(s.title_b_nbc)}" class="w-full mt-2 px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold uppercase outline-none focus:bg-white focus:border-blue-400 transition-all"></div>
+                <div><label class="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-2">Tajuk Rumusan Bank (Standard)</label><input name="title_bank_standard" value="${escapeAttrGlobal(s.title_bank_standard)}" class="w-full mt-2 px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold uppercase outline-none focus:bg-white focus:border-blue-400 transition-all"></div>
+                <div><label class="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-2">Tajuk Rumusan Bank (NBC Kolaborasi)</label><input name="title_bank_nbc" value="${escapeAttrGlobal(s.title_bank_nbc)}" class="w-full mt-2 px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold uppercase outline-none focus:bg-white focus:border-blue-400 transition-all"></div>
+                <div><label class="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-2">Tajuk Pengakuan (Standard)</label><input name="title_pengakuan_standard" value="${escapeAttrGlobal(s.title_pengakuan_standard)}" class="w-full mt-2 px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold uppercase outline-none focus:bg-white focus:border-blue-400 transition-all"></div>
+                <div><label class="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-2">Tajuk Pengakuan (NBC Kolaborasi)</label><input name="title_pengakuan_nbc" value="${escapeAttrGlobal(s.title_pengakuan_nbc)}" class="w-full mt-2 px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold uppercase outline-none focus:bg-white focus:border-blue-400 transition-all"></div>
+              </div></div>
+              <div class="pt-6"><button type="submit" class="w-full py-5 bg-gradient-to-r from-slate-800 to-slate-900 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl hover:shadow-2xl hover:-translate-y-1 active:scale-95 transition-all">Simpan Semua Tetapan</button></div>
+            </form>
+          </div>
+                     
+          <div class="space-y-8">
+            <!-- MATRIKS KAWALAN HAK AKSES (RBAC PANEL) -->
+            <div class="glass-card rounded-[2.5rem] overflow-hidden shadow-sm border border-slate-200 bg-white">
+              <div class="p-8 border-b border-slate-100 bg-slate-50/50"><div class="w-12 h-12 bg-blue-600 text-white rounded-2xl flex items-center justify-center mb-4 shadow-lg shadow-blue-500/10"><i class="fas fa-user-gear text-xl"></i></div><span class="text-xs font-black uppercase text-slate-800 tracking-widest">Matriks Hak Akses (RBAC)</span></div>
+              <form id="f-rbac-config" class="p-8 space-y-5" onsubmit="saveAllSettings(event)">
+                <div>
+                  <label class="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-2 block mb-2">Kebolehan Urus Anggota Oleh Penyelia</label>
+                  <select name="allow_supervisor_member_crud" class="w-full px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold outline-none cursor-pointer">
+                    <option value="false" ${s.allow_supervisor_member_crud === 'false' ? 'selected' : ''}>SEKAT AKSES PENYELIA (ADMIN SAHAJA - AUDIT BERSIH)</option>
+                    <option value="true" ${s.allow_supervisor_member_crud === 'true' ? 'selected' : ''}>BENARKAN PENYELIA DAFTAR & EDIT AHLI (KAWASAN SENDIRI)</option>
+                  </select>
+                  <p class="text-[9px] text-slate-400 font-bold uppercase tracking-wide leading-relaxed p-3 mt-3 bg-slate-50 border border-slate-100 rounded-xl">
+                    <i class="fas fa-circle-info text-blue-500 mr-1"></i> Apabila disekat, Penyelia jagaan cawangan hanya berada pada status View-Only (Lihat Profil Sahaja) demi mematuhi pematuhan tatatertib audit kewangan awam.
+                  </p>
+                </div>
+                <button type="submit" class="w-full py-5 bg-blue-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl hover:-translate-y-1 active:scale-95 transition-all">Kemaskini Matriks Akses</button>
+              </form>
+            </div>
+            
+            <div class="glass-card rounded-[2.5rem] overflow-hidden shadow-sm border border-slate-200 bg-white">
+              <div class="p-8 border-b border-slate-100 bg-slate-50/50"><div class="w-12 h-12 bg-emerald-600 text-white rounded-2xl flex items-center justify-center mb-4 shadow-lg"><i class="fas fa-money-check-dollar text-xl"></i></div><span class="text-xs font-black uppercase text-slate-800 tracking-widest">Aturan OT & Insentif Harian (NBC)</span></div>
+              <form id="f-ot-config" class="p-8 space-y-5" onsubmit="saveAllSettings(event)">
+                <input type="hidden" name="ot_custom_rates_json" id="ot-custom-rates-json-hidden" value="${escapeAttrGlobal(s.ot_custom_rates_json || '{}')}">
+                <div><label class="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-2">Suis Aturan OT Kerja Lebih Masa</label><select name="ot_rule_active" class="w-full mt-2 px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold outline-none cursor-pointer"><option value="true" ${s.ot_rule_active === 'true' ? 'selected' : ''}>AUTO-LOCK BULAN AKTIF</option><option value="false" ${s.ot_rule_active === 'false' ? 'selected' : ''}>TIDAK AKTIF</option></select></div>
+                <div class="grid grid-cols-2 gap-4">
+                  <div><label class="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-2">Had Jam Syif Normal</label><input type="number" name="ot_normal_max_hrs" value="${escapeAttrGlobal(s.ot_normal_max_hrs) || 8}" class="w-full mt-2 px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold outline-none"></div>
+                  <div><label class="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-2">Kadar Flat OT (RM/Jam)</label><input type="number" step="0.1" name="ot_rate_per_hr" value="${escapeAttrGlobal(s.ot_rate_per_hr) || '8.00'}" class="w-full mt-2 px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold outline-none"></div>
+                </div>
+                <div><label class="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-2">Kadar Insentif Harian Kolaborasi (RM/Hari)</label><input type="number" name="nbc_incentive_rate" value="${escapeAttrGlobal(s.nbc_incentive_rate) || '30.00'}" class="w-full mt-2 px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold outline-none"></div>
+                <div><label class="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-2">Lokasi/Pos Layak Insentif NBC</label><div class="space-y-2 mt-2 bg-slate-50 p-4 rounded-2xl border border-slate-200/60 max-h-48 overflow-y-auto hide-scrollbar">
+                  ${state.db.locations.map(l => { const isChecked = (s.nbc_enabled_locations || '').split(',').includes(l.id) ? 'checked' : ''; return `<label class="flex items-center gap-3 cursor-pointer p-1 rounded-lg hover:bg-white transition-colors"><input type="checkbox" name="nbc_loc_${l.id}" value="${l.id}" ${isChecked} class="w-4 h-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"><span class="text-xs font-bold text-slate-700 uppercase">[${l.short}] ${l.name}</span></label>`; }).join('')}
+                </div></div>
+                
+                <!-- MATRIKS KADAR OT PINTAR DAN DINAMIK CAWANGAN -->
+                <div class="space-y-3">
+                  <label class="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-2 block">Konfigurasi Aturan & Sektor OT Pintar</label>
+                  <div class="space-y-4 max-h-[340px] overflow-y-auto hide-scrollbar bg-slate-50 p-4 rounded-2xl border border-slate-200/60">
+                    ${renderOtLocationSelectors(state)}
+                  </div>
+                </div>
+                
+                <button type="submit" class="w-full py-5 bg-emerald-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl hover:-translate-y-1 active:scale-95 transition-all">Simpan Aturan Pengiraan</button>
+              </form>
+            </div>
+                         
+            <div class="glass-card rounded-[2.5rem] overflow-hidden shadow-sm border border-slate-200 bg-white">
+              <div class="p-6 border-b border-slate-100 bg-white flex justify-between items-center"><span class="text-xs font-black uppercase text-slate-800 tracking-widest">Senarai Lokasi</span><button onclick="openLocationFormJS()" class="px-5 py-3 bg-blue-50 text-blue-600 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-600 hover:text-white transition-colors">Tambah Baru</button></div>
+              <div id="list-loc" class="divide-y divide-slate-100 max-h-[35vh] overflow-y-auto hide-scrollbar bg-slate-50/50">
+                ${state.db.locations.map(l => `<div class="p-6 flex items-center justify-between hover:bg-white transition-colors group"><div><p class="text-xs font-black text-slate-800 uppercase tracking-wide">${l.name}</p><p class="text-[9px] font-black text-blue-500 uppercase tracking-widest mt-1 bg-blue-50 px-2 py-0.5 rounded-md inline-block mr-1">${l.short}</p><p class="text-[9px] font-black text-indigo-500 uppercase tracking-widest mt-1 bg-indigo-50 px-2 py-0.5 rounded-md inline-block">${l.format || '8'} JAM</p></div><div class="flex items-center gap-2"><button onclick="openLocationFormJS('${l.id}')" title="Kemaskini" class="w-8 h-8 rounded-xl bg-slate-100 text-slate-400 flex items-center justify-center hover:bg-blue-600 hover:text-white transition-colors shadow-sm"><i class="fas fa-pen text-[10px]"></i></button><button onclick="deleteLocationJS('${l.id}')" title="Padam" class="w-8 h-8 rounded-xl bg-rose-50 border border-rose-100 text-rose-400 flex items-center justify-center border border-rose-100 hover:bg-rose-600 hover:text-white transition-colors shadow-sm"><i class="fas fa-trash text-[10px]"></i></button></div></div>`).join('')}
+              </div>
+            </div>
+            <div class="glass-card rounded-[2.5rem] overflow-hidden shadow-sm border border-slate-200 bg-white">
+              <div class="p-6 border-b border-slate-100 bg-white flex justify-between items-center"><span class="text-xs font-black uppercase text-slate-800 tracking-widest">Akaun Penyelia</span><button onclick="openSupervisorFormJS()" class="px-5 py-3 bg-indigo-50 text-indigo-600 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-600 hover:text-white transition-colors">Tambah Baru</button></div>
+              <div id="list-sv" class="divide-y divide-slate-100 max-h-[35vh] overflow-y-auto hide-scrollbar bg-slate-50/50">
+                ${state.db.supervisors.map(sv => `<div class="p-6 flex items-center justify-between hover:bg-white transition-colors group"><div><p class="text-xs font-black text-slate-800 uppercase tracking-wide">${sv.name}</p><p class="text-[10px] font-bold text-slate-500 mt-1">ID: <span class="text-indigo-600 font-black">${sv.id}</span></p></div><div class="flex items-center gap-2"><button onclick="openSupervisorFormJS('${sv.id}')" title="Kemaskini" class="w-8 h-8 rounded-xl bg-slate-100 text-slate-400 flex items-center justify-center hover:bg-indigo-600 hover:text-white transition-colors shadow-sm"><i class="fas fa-pen text-[10px]"></i></button><button onclick="deleteSupervisorJS('${sv.id}')" title="Padam" class="w-8 h-8 rounded-xl bg-rose-50 border border-rose-100 text-rose-400 flex items-center justify-center border border-rose-100 hover:bg-rose-600 hover:text-white transition-colors shadow-sm"><i class="fas fa-trash text-[10px]"></i></button></div></div>`).join('')}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  // --- KOMPONEN: PREVIEW TUGASAN ---
+  function renderPreview(mode, mems, state) {
+    const day = mode === 'att' ? state.previewAttDay : state.previewRosDay;
+    const maxD = new Date(state.year, state.month, 0).getDate(); if(day > maxD) return '';
+    let html = '';
+    mems.forEach(m => {
+      const loc = state.locId === 'all' ? m.locId : state.locId; const key = `${loc}-${m.id}-${state.year}-${state.month}-${day}`; const val = mode === 'att' ? state.db.attendance[key] : state.db.roster[key];
+      if (mode === 'ros') {
+        const v = val || ''; const isOff = v === 'X' || v === 'CUTI' || v === 'OFF'; const syifCat = isOff ? 'OFF' : (v ? v : 'KOSONG'); if (state.rosFilter !== 'ALL' && syifCat !== state.rosFilter) return;
+        if(v) { html += `<div class="p-4 flex justify-between items-center hover:bg-white transition-colors"><div class="flex items-center gap-4"><div class="w-10 h-10 rounded-2xl ${isOff ? 'bg-rose-50 text-rose-600 border border-rose-100' : 'bg-emerald-50 text-emerald-600 border border-emerald-100'} flex items-center justify-center font-black text-sm shadow-sm">${m.nama.charAt(0)}</div><div><p class="text-[11px] font-black text-slate-800 uppercase truncate max-w-[150px] sm:max-w-[250px] tracking-tight">${m.nama}</p><p class="text-[9px] text-slate-400 font-bold uppercase mt-0.5 tracking-widest">${m.pangkat}</p></div></div><span class="px-3 py-1.5 ${isOff ? 'bg-rose-100 text-rose-700' : 'bg-emerald-100 text-emerald-700'} rounded-xl text-[9px] font-black uppercase tracking-widest shadow-sm">${v}</span></div>`; }
+      } else {
+        if(val && val !== 'X' && val !== 'OFF' && val !== '') {
+           const rosterVal = state.db.roster[key] || '';
+           const resolved = resolveAttendanceDisplay(val, rosterVal);
+           let badgeClass = 'bg-blue-600 text-white';
+           if (resolved.status === 'Aktif') badgeClass = 'bg-emerald-600 text-white animate-pulse';
+           if (resolved.status === 'Menunggu Pengesahan') badgeClass = 'bg-amber-500 text-white';
+           
+           html += `
+             <div class="p-4 flex justify-between items-center hover:bg-white transition-colors">
+               <div class="flex items-center gap-4">
+                 <div class="w-10 h-10 rounded-2xl bg-blue-50 text-blue-600 border border-blue-100 flex items-center justify-center font-black text-sm shadow-sm">${m.nama.charAt(0)}</div>
+                 <div>
+                   <p class="text-[11px] font-black text-slate-800 uppercase truncate max-w-[150px] sm:max-w-[250px] tracking-tight">${m.nama}</p>
+                   <p class="text-[9px] text-slate-400 font-bold uppercase mt-0.5 tracking-widest">${m.pangkat} &bull; <i class="fas fa-clock mr-0.5"></i> ${resolved.inTime} - ${resolved.outTime}</p>
+                 </div>
+               </div>
+               <span class="px-3 py-1.5 ${badgeClass} rounded-xl text-[10px] font-black uppercase tracking-widest shadow-md">${resolved.duration}</span>
+             </div>`;
+         }
+      }
+    }); return html || `<div class="py-10 text-center opacity-40 uppercase font-black text-xs">Tiada Rekod pada Tarikh Ini</div>`;
+  }
+
+  // Menapis data senarai berasaskan input pengguna
+  function filterList(inputId, containerId) {
+    const term = document.getElementById(inputId).value.toLowerCase(); const container = document.getElementById(containerId); if (!container) return;
+    const items = container.children;
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i]; if (item.tagName === 'STYLE' || item.tagName === 'SCRIPT' || item.id === 'no-data-placeholder') continue;
+      item.style.display = item.innerText.toLowerCase().includes(term) ? '' : 'none';
+    }
+  }
+
+  // Membuka paparan kalendar mini bagi pengubahsuaian pantas (DENGAN RESET MOD PUKAL)
+  function openCalendarModalJS(memId, mode, prefillDay = null) {
+    const st = window.appState;
+    
+    if (mode === 'ros' && st.isRosterLocked() && st.role !== 'admin') {
+      return alertMsg('Jadual tugas bulan ini telah dikunci.', 'error');
+    }
+    if (mode === 'att' && st.isMonthLocked() && st.role !== 'admin') {
+      return alertMsg('Rekod kehadiran bulan lepas telah dikunci sepenuhnya.', 'error');
+    }
+    
+    const m = st.db.members.find(x => x.id === memId);
+    st.calModal.memId = m.id;
+    st.calModal.memName = m.nama;
+    st.calModal.mode = mode;
+    st.calModal.selDay = prefillDay;
+    st.calModal.isBulk = false; // Set semula mod pukal kepada tidak aktif
+    st.calModal.selectedDays = []; // Kosongkan hari pilihan
+    renderCalGridJS();
+    renderCalButtonsJS(); // Bina semula butang secara dinamik
+    st.calModal.open = true;
+  }
+
+  // Menjana paparan grid hari bagi bulan semasa di modal (DENGAN SERLAHAN MOD PUKAL PREMIUM)
+  function renderCalGridJS() {
+     const st = window.appState;
+     const max = new Date(st.year, st.month, 0).getDate();
+     const m = st.db.members.find(x => x.id === st.calModal.memId);
+     const loc = st.locId === 'all' ? m.locId : st.locId;
+     
+     let h = '';
+     for(let d=1; d<=max; d++) {
+       const k = `${loc}-${m.id}-${st.year}-${st.month}-${d}`;
+       const v = st.calModal.mode === 'att' ? st.db.attendance[k] : st.db.roster[k];
+       
+       const isDayLocked = st.calModal.mode === 'att' ? st.isAttendanceLocked(d, m.id) : st.isRosterLocked(d);
+       
+       // Mengesan status pilihan berasaskan mod aktif (Pukal vs Tunggal)
+       const isSel = st.calModal.isBulk
+          ? st.calModal.selectedDays.includes(d)
+          : st.calModal.selDay === d;
+       
+       let cls = 'bg-white border-slate-100 text-slate-400 hover:bg-slate-50';
+       if(v) {
+        cls = st.calModal.mode === 'att' ? 'bg-blue-50 border-blue-200 text-blue-700 font-black' : 'bg-emerald-50 border-emerald-200 text-emerald-700 font-black';
+       }
+       
+       if(isSel) {
+        cls = st.calModal.mode === 'att' ? 'bg-blue-600 border-blue-600 text-white shadow-xl scale-110 z-10 font-black' : 'bg-emerald-600 border-emerald-600 text-white shadow-xl scale-110 z-10 font-black';
+       }
+       
+       if (isDayLocked && st.role !== 'admin') {
+         cls += ' opacity-55 cursor-not-allowed bg-slate-100';
+       }
+       
+       // Gelagat klik dinamik mengikut mod operasi semasa
+       let clickAction = '';
+       if (isDayLocked && st.role !== 'admin') {
+         clickAction = `alertMsg('Sesi hari ini telah dikunci.', 'error')`;
+       } else {
+         if (st.calModal.isBulk) {
+           clickAction = `toggleDaySelectionJS(${d})`;
+         } else {
+           clickAction = `window.appState.calModal.selDay=${d}; renderCalGridJS(); renderCalButtonsJS();`;
+         }
+       }
+       
+       h += `
+         <button onclick="${clickAction}" class="aspect-square rounded-2xl border transition-all flex flex-col items-center justify-center shadow-sm ${cls}">
+           <span class="text-[9px] opacity-70 mb-0.5">${d}</span>
+           <span class="text-[10px] leading-none ${v?'':'hidden'}">${v || ''}</span>
+         </button>
+       `;
+     }
+     document.getElementById('cal-grid-inject').innerHTML = h;
+  }
+
+  // Menjana panel kawalan butang tindakan di dalam modal kalendar secara dinamik
+  function renderCalButtonsJS() {
+    const st = window.appState;
+    const b = document.getElementById('cal-buttons-inject');
+    if (!b) return;
+    const mode = st.calModal.mode;
+    const isBulk = st.calModal.isBulk;
+    const selectedCount = st.calModal.selectedDays.length;
+    
+    // Label tajuk tarikh/pilihan pukal
+    const labelEl = document.getElementById('cal-date-label-inject');
+    if (labelEl) {
+      if (isBulk) {
+        labelEl.innerHTML = `PILIHAN PUKAL: <span class="text-blue-600 font-black">${selectedCount} HARI</span> DIPILIH`;
+      } else {
+        labelEl.innerHTML = st.calModal.selDay ? `TARIKH: ${st.calModal.selDay} ${M_SHORT[st.month-1]}` : 'SILA PILIH TARIKH';
+      }
+    }
+    let html = '';
+    if (mode === 'att') {
+      html = `
+        <button onclick="handleCalActionJS('12')" class="py-4 bg-white border border-blue-100 text-blue-600 rounded-2xl font-black text-xs shadow-sm hover:shadow-md hover:scale-105 transition-all">12 JAM</button>
+        <button onclick="handleCalActionJS('9')" class="py-4 bg-white border border-blue-100 text-blue-600 rounded-2xl font-black text-xs shadow-sm hover:shadow-md hover:scale-105 transition-all">9 JAM</button>
+        <button onclick="handleCalActionJS('8')" class="py-4 bg-white border border-blue-100 text-blue-600 rounded-2xl font-black text-xs shadow-sm hover:shadow-md hover:scale-105 transition-all">8 JAM</button>
+        <button onclick="handleCalActionJS('4')" class="py-4 bg-white border border-blue-100 text-blue-600 rounded-2xl font-black text-xs shadow-sm hover:shadow-md hover:scale-105 transition-all">4 JAM</button>
+        <button onclick="handleCalActionJS('X')" class="py-4 bg-rose-50 border border-rose-100 text-rose-600 rounded-2xl font-black text-xs shadow-sm hover:shadow-md hover:scale-105 transition-all">OFF</button>
+        <button onclick="handleCalActionJS('')" class="py-4 bg-slate-100 text-slate-500 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-200 transition-colors">Padam</button>
+
+        <!-- KOTAK INPUT MANUAL JAM (DISIPLIN / LEWAT) -->
+        <div class="col-span-3 pt-2 border-t border-dashed border-slate-200 mt-1">
+          <label class="block text-left text-[9px] font-black uppercase text-slate-400 tracking-wider mb-1.5 ml-1">
+            <i class="fas fa-pen-to-square text-blue-500 mr-1"></i> Manual Jam (Tolak Jam Lewat / Disiplin):
+          </label>
+          <div class="flex items-center gap-2">
+            <input type="number" step="0.5" min="0.5" max="24" id="manual-jam-input" placeholder="Cth: 7 atau 7.5" class="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-xs font-black text-center outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 transition-all shadow-sm">
+            <button onclick="applyManualHoursJS()" class="px-5 py-3 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-[10px] font-black uppercase tracking-wider shrink-0 active:scale-95 transition-all shadow-sm">
+              Set Jam
+            </button>
+          </div>
+        </div>
+      `;
+    } else {
+      html = `
+        <button onclick="handleCalActionJS('PAGI')" class="py-4 bg-white border border-emerald-100 text-emerald-600 rounded-2xl font-black text-[10px] tracking-wider shadow-sm hover:shadow-md hover:scale-105 transition-all">PAGI</button>
+        <button onclick="handleCalActionJS('PETANG')" class="py-4 bg-white border border-emerald-100 text-emerald-600 rounded-2xl font-black text-[10px] tracking-wider shadow-sm hover:shadow-md hover:scale-105 transition-all">PTG</button>
+        <button onclick="handleCalActionJS('MALAM')" class="py-4 bg-white border border-emerald-100 text-emerald-600 rounded-2xl font-black text-[10px] tracking-wider shadow-sm hover:shadow-md hover:scale-105 transition-all">MLM</button>
+        <button onclick="handleCalActionJS('OFF')" class="py-4 bg-rose-50 border border-rose-100 text-rose-600 rounded-2xl font-black text-[10px] tracking-wider shadow-sm hover:shadow-md hover:scale-105 transition-all">OFF</button>
+        <button onclick="handleCalActionJS('')" class="col-span-2 py-4 bg-slate-100 text-slate-500 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-200 transition-colors">Padam (Kosong)</button>
+      `;
+    }
+    if (isBulk) {
+      // Butang Simpan Pukal yang menyerlah
+      html += `
+        <button id="btn-save-bulk" onclick="saveBulkCalendarEntriesJS()" ${selectedCount === 0 ? 'disabled class="col-span-3 py-4 bg-slate-200 text-slate-400 rounded-2xl font-black text-xs uppercase tracking-widest cursor-not-allowed"' : 'class="col-span-3 py-4 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-lg hover:shadow-xl active:scale-95 transition-all cursor-pointer"'}>
+          <i class="fas fa-save mr-2 animate-pulse"></i> SIMPAN REKOD PUKAL
+        </button>
+      `;
+    }
+    b.innerHTML = html;
+  }
+
+  // Menguruskan pertukaran suis mod pukal kalendar
+  function toggleCalBulkModeJS() {
+    const st = window.appState;
+    st.calModal.selectedDays = [];
+    st.calModal.selDay = null;
+    
+    renderCalGridJS();
+    renderCalButtonsJS();
+  }
+
+  // Menguruskan kemasukan manual jam bertugas bagi kes lewat/disiplin
+  function applyManualHoursJS() {
+    const inputEl = document.getElementById('manual-jam-input');
+    if (!inputEl) return;
+    const val = parseFloat(inputEl.value);
+
+    if (isNaN(val) || val <= 0 || val > 24) {
+      return alertMsg('Sila masukkan nilai jam yang sah antara 0.5 hingga 24 jam.', 'warning');
+    }
+
+    // Format nombor (cth: 7 atau 7.5)
+    const formattedVal = (val % 1 === 0) ? val.toString() : val.toFixed(1);
+    handleCalActionJS(formattedVal);
+  }
+
+  // Gelagat menanda / membuang pilihan hari dalam Mod Pukal
+  function toggleDaySelectionJS(day) {
+    const st = window.appState;
+    const idx = st.calModal.selectedDays.indexOf(day);
+    if (idx > -1) {
+      st.calModal.selectedDays.splice(idx, 1);
+    } else {
+      st.calModal.selectedDays.push(day);
+    }
+    renderCalGridJS();
+    renderCalButtonsJS();
+  }
+
+  // Memilih semua atau membersihkan semua tarikh kalendar bertugas secara pintas
+  function bulkSelectAllDaysJS(shouldSelectAll) {
+    const st = window.appState;
+    if (shouldSelectAll) {
+      const max = new Date(st.year, st.month, 0).getDate();
+      const m = st.db.members.find(x => x.id === st.calModal.memId);
+      
+      const days = [];
+      for (let d = 1; d <= max; d++) {
+        const isDayLocked = st.calModal.mode === 'att' ? st.isAttendanceLocked(d, m.id) : st.isRosterLocked(d);
+        if (st.role === 'admin' || !isDayLocked) {
+          days.push(d);
+        }
+      }
+      st.calModal.selectedDays = days;
+    } else {
+      st.calModal.selectedDays = [];
+    }
+    
+    renderCalGridJS();
+    renderCalButtonsJS();
+  }
+
+  // Menguruskan peruntukan nilai jam/syif bertugas kepada tarikh-tarikh terpilih
+  function handleCalActionJS(val) {
+    const st = window.appState;
+    if (st.calModal.isBulk) {
+      if (st.calModal.selectedDays.length === 0) {
+        return alertMsg('Sila pilih sekurang-kurangnya satu hari pada kalendar.', 'warning');
+      }
+      
+      const m = st.db.members.find(x => x.id === st.calModal.memId);
+      const loc = st.locId === 'all' ? m.locId : st.locId;
+      
+      st.calModal.selectedDays.forEach(d => {
+        const k = `${loc}-${m.id}-${st.year}-${st.month}-${d}`;
+        if (st.calModal.mode === 'att' && val !== '' && st.role !== 'admin') {
+          const rosVal = st.db.roster[k] || '';
+          if (rosVal === '' || rosVal === 'OFF' || rosVal === 'CUTI' || rosVal === 'X') {
+            return; // Abaikan hari bertugas yang tiada jadual syif (Anti-Fraud)
+          }
+        }
+        
+        // Kemaskini tatasusunan memori tempatan (Optimistic Preview)
+        if (st.calModal.mode === 'att') {
+          if (val === '') delete st.db.attendance[k];
+          else st.db.attendance[k] = val;
+        } else {
+          if (val === '') delete st.db.roster[k];
+          else st.db.roster[k] = val;
+        }
+      });
+      
+      alertMsg(`Nilai diterapkan pada ${st.calModal.selectedDays.length} hari! Sila klik 'SIMPAN REKOD PUKAL' untuk memuktamadkan.`);
+      renderCalGridJS();
+      renderCalButtonsJS();
+    } else {
+      saveCalValJS(val); // Mod Tunggal Lalai
+    }
+  }
+
+  // Menghantar data kelompok pukal ke pelayan GAS dengan penutupan spinner segera & Penyelarasan Senyap (Silent Sync)
+  function saveBulkCalendarEntriesJS() {
+    const st = window.appState;
+    if (st.calModal.selectedDays.length === 0) return;
+    
+    showLoading(true);
+    const m = st.db.members.find(x => x.id === st.calModal.memId);
+    const loc = st.locId === 'all' ? m.locId : st.locId;
+    
+    const updates = st.calModal.selectedDays.map(d => {
+      const k = `${loc}-${m.id}-${st.year}-${st.month}-${d}`;
+      const val = st.calModal.mode === 'att' ? (st.db.attendance[k] || '') : (st.db.roster[k] || '');
+      return { key: k, val: val };
+    });
+    if (typeof google !== 'undefined' && google.script) {
+      google.script.run
+        .withSuccessHandler((res) => {
+          showLoading(false); // Tutup spinner sejurus kembali dari pelayan untuk mengelakkan ralat masa tamat!
+          if (res && res.success === false) {
+            return alertMsg(res.msg, 'error');
+          }
+          st.calModal.open = false;
+          st.syncFromServer(false, true); // JALANKAN PROSES PENYELARASAN SECARA SENYAP (SILENT BACKGROUND SYNC)
+          Swal.fire({
+            title: 'Berjaya!',
+            text: `Sejumlah ${updates.length} rekod harian berjaya dikemaskini secara kelompok pukal.`,
+            icon: 'success',
+            customClass: { popup: 'rounded-3xl' }
+          });
+        })
+        .withFailureHandler(err => {
+          showLoading(false);
+          alertMsg('Ralat simpan pukal: ' + (err.message || err), 'error');
+        })
+        .saveCalendarEntriesBulkSecure(sessionStorage.getItem('relaToken'), st.calModal.mode, updates);
+    } else {
+      showLoading(false);
+      st.calModal.open = false;
+      st.renderData();
+      alertMsg('Pilihan pukal disimpan (Mod Demo Offline)', 'success');
+    }
+  }
+
+  // Menyimpan data perubahan tunggal dengan respons hibrid visual instant dan Penyelarasan Senyap (Silent Sync)
+  function saveCalValJS(val) {
+    const st = window.appState; 
+    if(!st.calModal.selDay) return; 
+    const m = st.db.members.find(x=>x.id===st.calModal.memId); 
+    const loc = st.locId === 'all' ? m.locId : st.locId; 
+    const k = `${loc}-${m.id}-${st.year}-${st.month}-${st.calModal.selDay}`;
+     
+    const isLocked = st.calModal.mode === 'att' ? st.isAttendanceLocked(st.calModal.selDay, m.id) : st.isRosterLocked(st.calModal.selDay);
+    if (isLocked && st.role !== 'admin') {
+      return alertMsg('Sesi hari ini dikunci daripada sebarang modifikasi.', 'error');
+    }
+    let backupVal = st.calModal.mode === 'att' ? st.db.attendance[k] : st.db.roster[k];
+    
+    // 1. KEMASKINI OPTIMISTIK TEMPATAN (Serta-merta bertukar tanpa spinner menyekat skrin)
+    if(st.calModal.mode === 'att') { 
+       if (val !== '' && st.role !== 'admin') {
+         const rosVal = st.db.roster[k] || ''; 
+         if (rosVal === '' || rosVal === 'OFF' || rosVal === 'CUTI' || rosVal === 'X') {
+           return alertMsg('Anggota tidak mempunyai jadual kerja pada tarikh ini!', 'error');
+         }
+       }
+       if(val === '') delete st.db.attendance[k]; 
+       else st.db.attendance[k] = val;
+    } else { 
+       if(val === '') delete st.db.roster[k]; 
+       else st.db.roster[k] = val;
+    }
+    st.renderData(); // Visual background instant ditukar!
+
+    if(typeof google !== 'undefined' && google.script) {
+      // Dilakukan secara senyap (tanpa memaparkan modal pemutar biru menyekat operasi)
+      google.script.run
+      .withSuccessHandler((res) => {
+        if (res && res.success === false) {
+          // Rollback data jika pelayan gagal
+          if(st.calModal.mode === 'att') {
+            if(!backupVal) delete st.db.attendance[k]; else st.db.attendance[k] = backupVal;
+          } else {
+            if(!backupVal) delete st.db.roster[k]; else st.db.roster[k] = backupVal;
+          }
+          st.renderData();
+          return alertMsg(res.msg, 'error');
+        }
+        st.syncFromServer(false, true); // Silent background sync untuk data pengiraan gaji harian
+        const max = new Date(st.year, st.month, 0).getDate(); 
+        if(st.calModal.selDay < max) { 
+           st.calModal.selDay++; 
+           renderCalGridJS(); 
+           renderCalButtonsJS(); 
+        } else { 
+           st.calModal.open = false; 
+           alertMsg('Rekod berjaya dikemaskini.'); 
+        } 
+      })
+      .withFailureHandler(err => {
+        // Rollback data jika gagal bersambung
+        if(st.calModal.mode === 'att') {
+          if(!backupVal) delete st.db.attendance[k]; else st.db.attendance[k] = backupVal;
+        } else {
+          if(!backupVal) delete st.db.roster[k]; else st.db.roster[k] = backupVal;
+        }
+        st.renderData();
+        alertMsg('Gagal menyelaraskan rekod ke awan pelayan.', 'error');
+      })
+      .saveCalendarEntrySecure(sessionStorage.getItem('relaToken'), st.calModal.mode, k, val);
+    } else {
+      const max = new Date(st.year, st.month, 0).getDate();
+      if(st.calModal.selDay < max) { 
+        st.calModal.selDay++; 
+        renderCalGridJS(); 
+        renderCalButtonsJS(); 
+      } else { 
+        st.calModal.open = false; 
+      }
+    }
+  }
+
+  // Ditambah sokongan maklum balas senyap pasca mendaftar/kemaskini profil anggota (Instant optimistic insertion)
+  function openMemberFormJS(id = null, readOnly = false) {
+    const st = window.appState;
+    const isNew = !id;
+    let m = { id: 'M_' + Date.now(), locId: st.locId === 'all' ? '' : st.locId, nama: '', kp: '', tel: '', pangkat: 'AHLI', kadar: 8.00, bank: 'MAYBANK', akaun: '', noAhli: '', sme: 'TIDAK' };
+    if(!isNew) { m = st.db.members.find(x => x.id === id) || m; }
+    
+    st.formModal.title = isNew ? 'Daftar Anggota Baharu' : (readOnly ? 'Maklumat Profil Anggota' : 'Kemaskini Profil Anggota');
+    const readOnlyAttr = readOnly ? 'disabled class="w-full mt-2 px-6 py-4 bg-slate-100 border border-slate-200 rounded-2xl text-xs font-bold uppercase outline-none"' : 'class="w-full mt-2 px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold uppercase outline-none focus:bg-white focus:border-blue-400 transition-all"';
+    const locOptions = st.getAvailableLocations().map(l => `<option value="${l.id}" ${m.locId === l.id ? 'selected' : ''}>[${l.short}] ${l.name}</option>`).join('');
+    const cleanNoAhli = String(m.noAhli || '').replace(/'/g, '').trim();
+    const currentSme = String(m.sme || 'TIDAK').toUpperCase();
+    
+    document.getElementById('form-body-inject').innerHTML = `
+      <form id="f-member" class="space-y-5">
+        <input type="hidden" name="id" value="${m.id}">
+        <div>
+          <label class="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-2">Cawangan Penugasan</label>
+          <select name="locId" required ${readOnly ? 'disabled' : ''} class="w-full mt-2 px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold outline-none cursor-pointer">
+            <option value="" disabled ${!m.locId ? 'selected' : ''}>Pilih Lokasi...</option>
+            ${locOptions}
+          </select>
+        </div>
+        <div><label class="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-2">Nama Penuh (KP)</label><input type="text" name="nama" value="${m.nama}" required ${readOnlyAttr}></div>
+        
+        <!-- MEDAN BAHARU: NO AHLI RELA & STATUS SME -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label class="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-2">No. Ahli RELA</label>
+            <input type="text" name="noAhli" value="${cleanNoAhli}" placeholder="Cth: JE - 001 - 0028 - 2968919 - 90" ${readOnlyAttr}>
+          </div>
+          <div>
+            <label class="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-2">Kelayakan SME (Subject Matter Expert)</label>
+            <select name="sme" ${readOnly ? 'disabled' : ''} class="w-full mt-2 px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold outline-none cursor-pointer">
+              <option value="TIDAK" ${currentSme === 'TIDAK' ? 'selected' : ''}>TIDAK (ANGGOTA BIASA)</option>
+              <option value="YA" ${currentSme === 'YA' ? 'selected' : ''}>YA (PAKAR / SME RELA)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-4">
+          <div><label class="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-2">No. Kad Pengenalan</label><input type="text" name="kp" value="${m.kp}" required maxlength="12" placeholder="Cth: 851012015543" ${readOnlyAttr}></div>
+          <div><label class="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-2">No. Telefon</label><input type="text" name="tel" value="${m.tel}" required placeholder="Cth: 0127766543" ${readOnlyAttr}></div>
+        </div>
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-2">Pangkat Pasukan</label>
+            <select name="pangkat" ${readOnly ? 'disabled' : ''} class="w-full mt-2 px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold outline-none cursor-pointer">
+              <option value="AHLI" ${m.pangkat==='AHLI'?'selected':''}>AHLI</option>
+              <option value="PENYELIA" ${m.pangkat==='PENYELIA'?'selected':''}>PENYELIA</option>
+              <option value="KPR" ${m.pangkat==='KPR'?'selected':''}>KPR</option>
+              <option value="KPRK" ${m.pangkat==='KPRK'?'selected':''}>KPRK</option>
+            </select>
+          </div>
+          <div><label class="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-2">Kadar Elaun Pokok (RM/Jam)</label><input type="number" step="0.1" name="kadar" value="${m.kadar}" required ${readOnlyAttr}></div>
+        </div>
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-2">Nama Bank Berdaftar</label>
+            <select name="bank" ${readOnly ? 'disabled' : ''} class="w-full mt-2 px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold outline-none cursor-pointer">
+              <option value="AFFIN" ${m.bank==='AFFIN'?'selected':''}>AFFIN</option>
+              <option value="AGRO" ${m.bank==='AGRO'?'selected':''}>AGRO</option>
+              <option value="AL RAJHI" ${m.bank==='AL RAJHI'?'selected':''}>AL RAJHI</option>
+              <option value="ALLIANCE" ${m.bank==='ALLIANCE'?'selected':''}>ALLIANCE</option>
+              <option value="AMBANK" ${m.bank==='AMBANK'?'selected':''}>AMBANK</option>
+              <option value="B. TOKYO" ${m.bank==='B. TOKYO'?'selected':''}>B. TOKYO</option>
+              <option value="BANK AMERICA" ${m.bank==='BANK AMERICA'?'selected':''}>BANK AMERICA</option>
+              <option value="BANK ISLAM" ${m.bank==='BANK ISLAM'?'selected':''}>BANK ISLAM</option>
+              <option value="BANK RAKYAT" ${m.bank==='BANK RAKYAT'?'selected':''}>BANK RAKYAT</option>
+              <option value="BNP PARIBAS" ${m.bank==='BNP PARIBAS'?'selected':''}>BNP PARIBAS</option>
+              <option value="BSN" ${m.bank==='BSN'?'selected':''}>BSN</option>
+              <option value="CIMB" ${m.bank==='CIMB'?'selected':''}>CIMB</option>
+              <option value="CITIBANK" ${m.bank==='CITIBANK'?'selected':''}>CITIBANK</option>
+              <option value="DEUTSCHE" ${m.bank==='DEUTSCHE'?'selected':''}>DEUTSCHE</option>
+              <option value="HONG LEONG" ${m.bank==='HONG LEONG'?'selected':''}>HONG LEONG</option>
+              <option value="HSBC" ${m.bank==='HSBC'?'selected':''}>HSBC</option>
+              <option value="INDIA INTERNATIONAL" ${m.bank==='INDIA INTERNATIONAL'?'selected':''}>INDIA INTERNATIONAL</option>
+              <option value="IND COMM BANK OF CHINA" ${m.bank==='IND COMM BANK OF CHINA'?'selected':''}>IND COMM BANK OF CHINA</option>
+              <option value="MIZUHO" ${m.bank==='MIZUHO'?'selected':''}>MIZUHO</option>
+              <option value="NB ABU DHABI" ${m.bank==='NB ABU DHABI'?'selected':''}>NB ABU DHABI</option>
+              <option value="JP MORGAN" ${m.bank==='JP MORGAN'?'selected':''}>JP MORGAN</option>
+              <option value="KUWAIT" ${m.bank==='KUWAIT'?'selected':''}>KUWAIT</option>
+              <option value="MAYBANK" ${m.bank==='MAYBANK'?'selected':''}>MAYBANK</option>
+              <option value="MUAMALAT" ${m.bank==='MUAMALAT'?'selected':''}>MUAMALAT</option>
+              <option value="OCBC" ${m.bank==='OCBC'?'selected':''}>OCBC</option>
+              <option value="PUBLIC" ${m.bank==='PUBLIC'?'selected':''}>PUBLIC</option>
+              <option value="R.B SCOTLAND" ${m.bank==='R.B SCOTLAND'?'selected':''}>R.B SCOTLAND</option>
+              <option value="RHB BANK" ${m.bank==='RHB BANK'?'selected':''}>RHB BANK</option>
+              <option value="S.CHARTERED" ${m.bank==='S.CHARTERED'?'selected':''}>S.CHARTERED</option>
+              <option value="SUMITOMO" ${m.bank==='SUMITOMO'?'selected':''}>SUMITOMO</option>
+              <option value="UOB" ${m.bank==='UOB'?'selected':''}>UOB</option>
+            </select>
+          </div>
+          <div><label class="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-2">No. Akaun Bank</label><input type="text" name="akaun" value="${m.akaun}" required ${readOnlyAttr}></div>
+        </div>
+        ${readOnly ? '' : `<div class="pt-4"><button type="submit" class="w-full py-5 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl active:scale-95 transition-all">${isNew ? 'Daftar Ahli Baharu' : 'Simpan Perubahan'}</button></div>`}
+      </form>`;
+    
+    if(!readOnly) {
+      document.getElementById('f-member').onsubmit = e => {
+        e.preventDefault(); const mObj = Object.fromEntries(new FormData(e.target).entries()); mObj.kadar = parseFloat(mObj.kadar) || 8;
+        mObj.kp = String(mObj.kp).replace(/[^0-9]/g, '').trim(); 
+        mObj.tel = String(mObj.tel).replace(/[^0-9]/g, '').trim(); 
+        mObj.akaun = String(mObj.akaun).replace(/[^0-9]/g, '').trim();
+        mObj.noAhli = String(mObj.noAhli || '').trim();
+        mObj.sme = String(mObj.sme || 'TIDAK').toUpperCase();
+
+        if (mObj.kp.length !== 12) return alertMsg('Sila isi No KP 12 digit yang sah tanpa sengkang.', 'warning');
+        if (isNew && st.db.members.some(x => String(x.kp).replace(/'/g, '') === mObj.kp)) return alertMsg('Anggota ini sudahpun berdaftar!', 'error');
+        showLoading(true);
+        if(typeof google !== 'undefined' && google.script) {
+          google.script.run.withSuccessHandler((res) => {
+             showLoading(false);
+             if (res.success) {
+               st.formModal.open = false;
+               // Kemaskini visual senarai serta-merta
+              if (isNew) st.db.members.push(mObj);
+              else {
+                const idx = st.db.members.findIndex(x => x.id === mObj.id);
+                if (idx !== -1) st.db.members[idx] = mObj;
+              }
+              st.renderData();
+              st.syncFromServer(false, true); // Silent background sync untuk data pangkalan
+              Swal.fire({ title: 'Berjaya!', text: 'Profil Anggota berjaya dikemaskini.', icon: 'success', customClass: { popup: 'rounded-3xl' } });
+             } else {
+               alertMsg(res.msg, 'error');
+             }
+           }).withFailureHandler(err => {
+             showLoading(false);
+             alertMsg('Ralat: ' + err.message, 'error');
+           }).saveMemberSecure(sessionStorage.getItem('relaToken'), mObj);
+        } else {
+          showLoading(false); st.formModal.open = false; if(isNew) st.db.members.push(mObj); else { const idx = st.db.members.findIndex(x => x.id === mObj.id); if(idx !== -1) st.db.members[idx] = mObj; } st.renderData(); alertMsg('Disimpan (Mod Demo)');
+        }
+      };
+    }
+    st.formModal.open = true;
+  }
+
+  // Ditambah sokongan silent sync pasca pemadaman anggota (Instant visual deletion)
+  function deleteMemberJS(id) {
+    const st = window.appState; const m = st.db.members.find(x => x.id === id); if(!m) return;
+    Swal.fire({ title: 'Padam Anggota?', html: `Adakah anda pasti mahu memadam profil petugas <b>${m.nama}</b>?`, icon: 'warning', showCancelButton: true, confirmButtonColor: '#ef4444', cancelButtonColor: '#94a3b8', confirmButtonText: 'Ya, Padam', customClass: { popup: 'rounded-3xl' } }).then(r => {
+      if(r.isConfirmed) {
+        showLoading(true);
+        if(typeof google !== 'undefined' && google.script) {
+          google.script.run.withSuccessHandler((res) => {
+             showLoading(false);
+             if (res.success) {
+               st.db.members = st.db.members.filter(x => x.id !== id);
+              st.renderData(); // Kemaskini visual serta-merta
+              st.syncFromServer(false, true); // Silent background sync
+              alertMsg('Profil Anggota dipadam.');
+             } else {
+               alertMsg(res.msg, 'error');
+             }
+           }).withFailureHandler(err => {
+             showLoading(false);
+             alertMsg('Ralat: ' + err.message, 'error');
+           }).deleteMemberSecure(sessionStorage.getItem('relaToken'), id);
+        } else { showLoading(false); st.db.members = st.db.members.filter(x => x.id !== id); st.renderData(); alertMsg('Dipadam.'); }
+      }
+    });
+  }
+
+  // Ditambah input medan pilihan Format Syif Pantas & Jam Manual di dalam borang Cawangan
+  function openLocationFormJS(id = null) {
+    const st = window.appState; const isNew = !id; let l = { id: 'L_' + Date.now(), name: '', short: '', format: '8' };
+    if(!isNew) l = st.db.locations.find(x => x.id === id) || l;
+    st.formModal.title = isNew ? 'Daftar Cawangan Baharu' : 'Kemaskini Cawangan';
+
+    const currentFormat = String(l.format || '8');
+    const isStandard = ['4', '8', '9', '12'].includes(currentFormat);
+    const selectedDropdown = isStandard ? currentFormat : 'custom';
+    const customHoursVal = isStandard ? '' : currentFormat;
+
+    document.getElementById('form-body-inject').innerHTML = `
+      <form id="f-location" class="space-y-5">
+        <input type="hidden" name="id" value="${l.id}">
+        <div><label class="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-2">Nama Penuh Cawangan</label><input type="text" name="name" value="${escapeAttrGlobal(l.name)}" required class="w-full mt-2 px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold uppercase outline-none focus:bg-white focus:border-blue-400 transition-all"></div>
+        <div><label class="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-2">Singkatan Kod</label><input type="text" name="short" value="${escapeAttrGlobal(l.short)}" required class="w-full mt-2 px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold uppercase outline-none focus:bg-white focus:border-blue-400 transition-all"></div>
+        <div>
+          <label class="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-2">Format Sesi Waktu Bertugas Lalai</label>
+          <select id="loc-format-preset" onchange="toggleCustomLocFormatJS(this.value)" class="w-full mt-2 px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold outline-none cursor-pointer">
+            <option value="4" ${selectedDropdown === '4' ? 'selected' : ''}>4 JAM (SEPARUH HARI)</option>
+            <option value="8" ${selectedDropdown === '8' ? 'selected' : ''}>8 JAM (LALAI STANDARD PEJABAT)</option>
+            <option value="9" ${selectedDropdown === '9' ? 'selected' : ''}>9 JAM (SYIF OPERASI KHAS)</option>
+            <option value="12" ${selectedDropdown === '12' ? 'selected' : ''}>12 JAM (KAWASAN OPERASI KHAS/NBC)</option>
+            <option value="custom" ${selectedDropdown === 'custom' ? 'selected' : ''}>LAIN-LAIN / SET MANUAL JAM...</option>
+          </select>
+        </div>
+        <div id="loc-format-custom-container" class="${selectedDropdown === 'custom' ? '' : 'hidden'} bg-blue-50/50 p-4 rounded-2xl border border-blue-150 space-y-2">
+          <label class="text-[9px] font-black uppercase text-blue-700 tracking-wider ml-1">Kemasukan Manual Jam Syif Standard (Angka)</label>
+          <div class="flex items-center gap-2">
+            <input type="number" step="0.5" min="1" max="24" id="loc-format-custom-val" value="${customHoursVal}" placeholder="Cth: 6, 7, atau 10" class="w-full px-5 py-3.5 bg-white border border-slate-200 rounded-xl text-xs font-black text-center outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 transition-all">
+            <span class="text-xs font-black text-blue-700 px-3 shrink-0">JAM</span>
+          </div>
+          <p class="text-[8px] text-slate-400 font-bold uppercase tracking-wide leading-relaxed">
+            *Jam ini digunakan sebagai had asas kiraan auto-cap QR kiosk dan lalai penugasan cawangan.
+          </p>
+        </div>
+        <button type="submit" class="w-full py-5 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl active:scale-95 transition-all">${isNew ? 'Daftar Cawangan' : 'Simpan Perubahan'}</button>
+      </form>`;
+
+    window.toggleCustomLocFormatJS = function(presetVal) {
+      const container = document.getElementById('loc-format-custom-container');
+      const customInput = document.getElementById('loc-format-custom-val');
+      if (container) {
+        if (presetVal === 'custom') {
+          container.classList.remove('hidden');
+          if (customInput) customInput.focus();
+        } else {
+          container.classList.add('hidden');
+        }
+      }
+    };
+
+    document.getElementById('f-location').onsubmit = e => {
+      e.preventDefault(); 
+      const formEl = e.target;
+      const lObj = Object.fromEntries(new FormData(formEl).entries()); 
+      lObj.short = lObj.short.toUpperCase();
+
+      const presetVal = document.getElementById('loc-format-preset').value;
+      if (presetVal === 'custom') {
+        const customInput = document.getElementById('loc-format-custom-val');
+        const customVal = parseFloat(customInput ? customInput.value : '');
+        if (isNaN(customVal) || customVal <= 0 || customVal > 24) {
+          return alertMsg('Sila masukkan nilai jam manual yang sah antara 1 hingga 24 jam.', 'warning');
+        }
+        lObj.format = (customVal % 1 === 0) ? customVal.toString() : customVal.toFixed(1);
+      } else {
+        lObj.format = presetVal;
+      }
+
+      showLoading(true);
+      if(typeof google !== 'undefined' && google.script) {
+        google.script.run.withSuccessHandler((res) => {
+           showLoading(false);
+           if(res.success) {
+             st.formModal.open = false;
+             if(isNew) st.db.locations.push(lObj);
+            else {
+              const idx = st.db.locations.findIndex(x=>x.id===lObj.id);
+              if(idx!==-1) st.db.locations[idx]=lObj;
+            }
+            st.renderData();
+            st.syncFromServer(false, true); // Silent background sync
+            alertMsg('Cawangan disimpan.');
+           } else alertMsg(res.msg, 'error');
+         }).withFailureHandler(err => { showLoading(false); alertMsg('Ralat: ' + err.message, 'error'); }).saveLocationSecure(sessionStorage.getItem('relaToken'), lObj);
+      } else { 
+        showLoading(false); 
+        st.formModal.open = false; 
+        if(isNew) st.db.locations.push(lObj); 
+        else { 
+          const idx = st.db.locations.findIndex(x=>x.id===lObj.id); 
+          if(idx!==-1) st.db.locations[idx]=lObj; 
+        } 
+        st.renderData(); 
+        alertMsg('Disimpan (Demo)'); 
+      }
+    };
+    st.formModal.open = true;
+  }
+
+  // Ditambah sokongan silent sync pasca pemadaman cawangan (Instant visual update)
+  function deleteLocationJS(id) {
+    const st = window.appState;
+    Swal.fire({ title: 'Padam Cawangan?', html: 'Tindakan ini akan memadam data penugasan cawangan berkenaan.', icon: 'warning', showCancelButton: true, confirmButtonColor: '#ef4444', confirmButtonText: 'Ya, Padam', customClass: { popup: 'rounded-3xl' } }).then(r => {
+      if(r.isConfirmed) {
+        showLoading(true);
+        if(typeof google !== 'undefined' && google.script) {
+          google.script.run.withSuccessHandler((res) => {
+             showLoading(false);
+             if(res.success) {
+               st.formModal.open = false;
+               st.db.locations = st.db.locations.filter(x=>x.id!==id);
+              st.renderData();
+              st.syncFromServer(false, true); // Silent background sync
+              alertMsg('Cawangan dipadam.');
+             } else alertMsg(res.msg, 'error');
+           }).withFailureHandler(err => { showLoading(false); alertMsg('Ralat: ' + err.message, 'error'); }).deleteLocationSecure(sessionStorage.getItem('relaToken'), id);
+        } else { showLoading(false); st.db.locations = st.db.locations.filter(x=>x.id!==id); st.renderData(); alertMsg('Dipadam.'); }
+      }
+    });
+  }
+
+  // Ditambah sokongan silent sync pasca daftar penyelia (Instant visual update)
+  function openSupervisorFormJS(id = null) {
+    const st = window.appState; const isNew = !id; let sv = { id: '', name: '', locId: '', email: '', pass: '' };
+    if(!isNew) sv = st.db.supervisors.find(x => x.id === id) || sv;
+    st.formModal.title = isNew ? 'Daftar Penyelia Baharu' : 'Kemaskini Akaun Penyelia';
+    const locCheckboxHtml = st.db.locations.map(l => { const isChecked = sv.locId.split(',').includes(l.id) ? 'checked' : ''; return `<label class="flex items-center gap-3 p-3 bg-white border border-slate-150 rounded-xl hover:bg-slate-50 transition-colors cursor-pointer shadow-sm"><input type="checkbox" name="loc_auth" value="${l.id}" ${isChecked} class="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"><span class="text-xs font-bold text-slate-700 uppercase">[${l.short}] ${l.name}</span></label>`; }).join('');
+    document.getElementById('form-body-inject').innerHTML = `
+      <form id="f-supervisor" class="space-y-5">
+        <div><label class="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-2">ID Log Masuk (Unik)</label><input type="text" name="id" value="${sv.id}" required ${!isNew ? 'readonly class="w-full mt-2 px-6 py-4 bg-slate-100 border border-slate-200 rounded-2xl text-xs font-bold uppercase outline-none cursor-not-allowed"' : 'class="w-full mt-2 px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold uppercase outline-none focus:bg-white focus:border-blue-400 transition-all"'}></div>
+        <div><label class="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-2">Nama Paparan Sistem</label><input type="text" name="name" value="${sv.name}" required class="w-full mt-2 px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold uppercase outline-none focus:bg-white focus:border-blue-400 transition-all"></div>
+        <div><label class="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-2">Alamat E-mel (Bagi OTP)</label><input type="email" name="email" value="${sv.email}" required class="w-full mt-2 px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold outline-none focus:bg-white focus:border-blue-400 transition-all"></div>
+        <div><label class="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-2">Kata Laluan ${isNew ? '' : '(Kosongkan jika tidak mahu ditukar)'}</label><input type="password" name="pass" ${isNew ? 'required' : ''} placeholder="******" class="w-full mt-2 px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold outline-none focus:bg-white focus:border-blue-400 transition-all"></div>
+        <div><label class="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-2 block mb-2">Lokaliti Tanggungjawab Jagaan</label><div class="grid gap-3 max-h-48 overflow-y-auto hide-scrollbar p-1">${locCheckboxHtml}</div></div>
+        <button type="submit" class="w-full py-5 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl active:scale-95 transition-all">${isNew ? 'Daftar Penyelia' : 'Simpan Perubahan'}</button>
+      </form>`;
+    document.getElementById('f-supervisor').onsubmit = e => {
+      e.preventDefault(); const sObj = Object.fromEntries(new FormData(e.target).entries());
+      const selectedLocs = Array.from(document.querySelectorAll('input[name="loc_auth"]:checked')).map(cb => cb.value);
+      if(selectedLocs.length === 0) return alertMsg('Penyelia wajib mempunyai sekurang-kurangnya SATU lokasi tanggungjawab!', 'warning');
+      sObj.locId = selectedLocs.join(','); sObj.id = sObj.id.toUpperCase().trim().replace(/\s+/g, '_');
+      
+      showLoading(true);
+      if(typeof google !== 'undefined' && google.script) {
+        google.script.run.withSuccessHandler((res) => {
+           showLoading(false);
+           if(res.success) {
+             st.formModal.open = false;
+             if(isNew) st.db.supervisors.push(sObj);
+            else {
+              const idx = st.db.supervisors.findIndex(x=>x.id===sObj.id);
+              if(idx!==-1) st.db.supervisors[idx]=sObj;
+            }
+            st.renderData();
+            st.syncFromServer(false, true); // Silent background sync
+            alertMsg('Profil Penyelia disimpan.');
+           } else alertMsg(res.msg, 'error');
+         }).withFailureHandler(err => { showLoading(false); alertMsg('Ralat: ' + err.message, 'error'); }).saveSupervisorSecure(sessionStorage.getItem('relaToken'), sObj);
+      } else { showLoading(false); st.formModal.open = false; if(isNew) st.db.supervisors.push(sObj); else { const idx = st.db.supervisors.findIndex(x=>x.id===sObj.id); if(idx!==-1) st.db.supervisors[idx]=sObj; } st.renderData(); alertMsg('Penyelia disimpan.'); }
+    };
+    st.formModal.open = true;
+  }
+
+  // Ditambah sokongan silent sync pasca pemadaman penyelia (Instant visual update)
+  function deleteSupervisorJS(id) {
+    const st = window.appState;
+    Swal.fire({ title: 'Padam Akaun Penyelia?', html: `Adakah anda pasti mahu memadam akaun penyelia <b>${id}</b>?`, icon: 'warning', showCancelButton: true, confirmButtonColor: '#ef4444', confirmButtonText: 'Ya, Padam', customClass: { popup: 'rounded-3xl' } }).then(r => {
+      if(r.isConfirmed) {
+        showLoading(true);
+        if(typeof google !== 'undefined' && google.script) {
+          google.script.run.withSuccessHandler((res) => {
+             showLoading(false);
+             if(res.success) {
+               st.formModal.open = false;
+               st.db.supervisors = st.db.supervisors.filter(x=>x.id!==id);
+              st.renderData();
+              st.syncFromServer(false, true); // Silent background sync
+              alertMsg('Penyelia dipadam.');
+             } else alertMsg(res.msg, 'error');
+           }).withFailureHandler(err => { showLoading(false); alertMsg('Ralat: ' + err.message, 'error'); }).deleteSupervisorSecure(sessionStorage.getItem('relaToken'), id);
+        } else { showLoading(false); st.db.supervisors = st.db.supervisors.filter(x=>x.id!==id); st.renderData(); alertMsg('Penyelia dipadam.'); }
+      }
+    });
+  }
+
+  // Ditambah sokongan silent sync pasca simpan tetapan (Instant visual update)
+  function saveAllSettings(e) {
+    e.preventDefault(); const st = window.appState; const form = e.target; const formData = new FormData(form); let payload = {};
+    if(form.id === 'f-settings') {
+      payload = { report_daerah: formData.get('report_daerah'), report_disediakan: formData.get('report_disediakan'), report_disemak: formData.get('report_disemak'), report_disahkan: formData.get('report_disahkan'), github_scanner_url: formData.get('github_scanner_url'), github_preview_url: formData.get('github_preview_url'), title_b_standard: formData.get('title_b_standard'), title_b_nbc: formData.get('title_b_nbc'), title_bank_standard: formData.get('title_bank_standard'), title_bank_nbc: formData.get('title_bank_nbc'), title_pengakuan_standard: formData.get('title_pengakuan_standard'), title_pengakuan_nbc: formData.get('title_pengakuan_nbc') };
+    } else if(form.id === 'f-rbac-config') {
+      payload = { allow_supervisor_member_crud: formData.get('allow_supervisor_member_crud') };
+    } else if(form.id === 'f-ot-config') {
+      const nbcLocs = Array.from(form.querySelectorAll('input[name^="nbc_loc_"]:checked')).map(el => el.value).join(',');
+      const otLocs = Array.from(form.querySelectorAll('input[name^="ot_loc_"]:checked')).map(el => el.value).join(',');
+      payload = { 
+        ot_rule_active: formData.get('ot_rule_active'), 
+        ot_normal_max_hrs: formData.get('ot_normal_max_hrs'), 
+        ot_rate_per_hr: parseFloat(formData.get('ot_rate_per_hr')).toFixed(2), 
+        nbc_incentive_rate: parseFloat(formData.get('nbc_incentive_rate')).toFixed(2), 
+        nbc_enabled_locations: nbcLocs, 
+        ot_enabled_locations: otLocs,
+        ot_custom_rates_json: formData.get('ot_custom_rates_json') // Ambil rentetan serialised JSON
+      };
+    }
+    showLoading(true);
+    if(typeof google !== 'undefined' && google.script) {
+      google.script.run.withSuccessHandler((res) => {
+          showLoading(false);
+          if (res.success) {
+            Object.assign(st.db.settings, payload); // Kemaskini optimistis
+            st.renderData();
+            st.syncFromServer(false, true); // Silent background sync
+            Swal.fire({ title: 'Tersimpan!', text: 'Aturan induk konfigurasi berjaya direkodkan.', icon: 'success', customClass: { popup: 'rounded-3xl' } });
+          } else {
+            alertMsg(res.msg, 'error');
+          }
+        }).withFailureHandler(err => { showLoading(false); alertMsg('Gagal: ' + err.message, 'error'); }).saveSettingsBulkSecure(sessionStorage.getItem('relaToken'), payload);
+    } else { showLoading(true); Object.assign(st.db.settings, payload); st.renderData(); alertMsg('Konfigurasi disimpan (Demo)'); }
+  }
+
+  // --- ENJIN INTERPRETER PARSER IMPORT EXCEL (TSV) ---
+  function openImportModalJS() {
+    const st = window.appState; st.formModal.title = 'Import Profil Anggota (Excel)';
+    document.getElementById('form-body-inject').innerHTML = `
+      <div class="space-y-6 page-transition">
+        <div class="bg-blue-50 border border-blue-150 p-5 rounded-2xl text-slate-700">
+          <h4 class="text-xs font-black uppercase text-blue-800 mb-2"><i class="fas fa-circle-info mr-1"></i> Format Lajur Salinan Excel (TSV):</h4>
+          <p class="text-[9px] font-black text-blue-700/80 uppercase leading-relaxed tracking-wider">Sila salin lajur dari lembaran kerja Excel mengikut turutan ini:<br><span class="bg-white/80 border border-blue-200 px-2 py-1 rounded inline-block font-mono my-2 text-[8px]">NAMA | NO KP | TELEFON | PANGKAT | KADAR | BANK | AKAUN | ID CAWANGAN | NO AHLI (Pilihan) | SME (YA/TIDAK)</span><br>*No KP, Telefon, Akaun & No Ahli akan dikunci dengan format sifar hadapan secara tegar.</p>
+        </div>
+        <div><label class="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-2">Tampal Data Dari Excel (Paste Sini)</label><textarea id="excel-paste-area" rows="6" placeholder="Tampal baris data Excel di sini..." class="w-full mt-2 p-4 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-semibold outline-none focus:bg-white focus:border-emerald-500 font-mono transition-all"></textarea></div>
+        <div id="import-preflight-summary" class="hidden p-4 bg-emerald-50 border border-emerald-150 rounded-2xl text-left"><p class="text-xs font-black text-emerald-800 uppercase tracking-wide mb-1"><i class="fas fa-check-circle mr-1"></i> Pra-Saringan Lulus</p><p class="text-[9px] font-bold text-emerald-600 uppercase leading-relaxed" id="preflight-text"></p></div>
+        <div class="flex gap-4"><button onclick="preflightExcelParseJS()" class="w-1/2 py-4 bg-slate-800 text-white rounded-2xl font-black text-xs uppercase tracking-widest active:scale-95 transition-all">Saring Data</button><button id="btn-import-execute" onclick="executeExcelImportJS()" disabled class="w-1/2 py-4 bg-slate-300 text-slate-500 rounded-2xl font-black text-xs uppercase tracking-widest cursor-not-allowed transition-all font-bold">Import Sekarang</button></div>
+      </div>`;
+    st.formModal.open = true;
+  }
+  
+  let tempImportQueue = [];
+  function preflightExcelParseJS() {
+    const rawText = document.getElementById('excel-paste-area').value.trim(); if(!rawText) return alertMsg('Sila tampal data Excel terlebih dahulu.', 'warning');
+    const lines = rawText.split('\n'); const st = window.appState; tempImportQueue = []; let errorLines = [];
+    
+    lines.forEach((line, index) => {
+      if(!line.trim()) return; const cols = line.split('\t');
+      if(cols.length < 8) { errorLines.push(`Baris ${index+1}: Lajur tidak lengkap (Kurang dari 8 lajur asas).`); return; }
+      
+      const nama = cols[0].toUpperCase().trim(); let kp = cols[1].replace(/[^0-9]/g, '').trim(); let tel = cols[2].replace(/[^0-9]/g, '').trim();
+      const pangkat = cols[3].toUpperCase().trim(); const kadar = parseFloat(cols[4]) || 8.00; const bank = cols[5].toUpperCase().trim();
+      let akaun = cols[6].replace(/[^0-9]/g, '').trim(); const locId = cols[7].trim();
+      const noAhli = cols[8] ? cols[8].trim() : '';
+      const sme = (cols[9] && cols[9].toUpperCase().trim() === 'YA') ? 'YA' : 'TIDAK';
+
+      if (st.role === 'penyelia' && !st.allowedLocs.split(',').includes(locId)) { errorLines.push(`Baris ${index+1}: Sektor [${locId}] di luar jagaan anda.`); return; }
+      if(!st.db.locations.some(l => l.id === locId)) { errorLines.push(`Baris ${index+1}: Cawangan [${locId}] tiada dalam sistem.`); return; }
+      if(kp.length !== 12) { errorLines.push(`Baris ${index+1}: KP mestilah berjarak 12 digit.`); return; }
+      tempImportQueue.push({ id: 'M_' + (Date.now() + index), locId, nama, kp, tel, pangkat, kadar, bank, akaun, noAhli, sme });
+    });
+    if(errorLines.length > 0) {
+      tempImportQueue = []; const btn = document.getElementById('btn-import-execute'); btn.disabled = true; btn.className = "w-1/2 py-4 bg-slate-300 text-slate-500 rounded-2xl font-black text-xs uppercase tracking-widest cursor-not-allowed transition-all";
+      document.getElementById('import-preflight-summary').className = "p-4 bg-rose-50 border border-rose-150 rounded-2xl text-left";
+      document.getElementById('preflight-text').innerHTML = `Terdapat ralat pada data anda:<br>${errorLines.slice(0,4).map(e => `&bull; ${e}`).join('<br>')}`;
+      document.getElementById('import-preflight-summary').classList.remove('hidden'); return alertMsg('Saringan gagal.', 'error');
+    }
+    document.getElementById('preflight-text').innerHTML = `Sejumlah <b>${tempImportQueue.length} baris data</b> sedia diserap masuk. Struktur data disahkan bersih.`;
+    document.getElementById('import-preflight-summary').className = "p-4 bg-emerald-50 border border-emerald-150 rounded-2xl text-left";
+    document.getElementById('import-preflight-summary').classList.remove('hidden');
+    const btn = document.getElementById('btn-import-execute'); btn.disabled = false; btn.className = "w-1/2 py-4 bg-gradient-to-r from-emerald-500 to-teal-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl active:scale-95 cursor-pointer transition-all";
+  }
+
+  function executeExcelImportJS() {
+    if(tempImportQueue.length === 0) return; const st = window.appState; showLoading(true);
+    if(typeof google !== 'undefined' && google.script) {
+      google.script.run.withSuccessHandler((res) => {
+          showLoading(false);
+          if (res.success) {
+            st.formModal.open = false;
+            st.syncFromServer(false, true); // Silent background sync
+            Swal.fire({ title: 'Import Selesai!', text: `Seramai ${tempImportQueue.length} anggota didaftarkan.`, icon: 'success', customClass: { popup: 'rounded-3xl' } });
+            tempImportQueue = [];
+          } else {
+            alertMsg(res.msg, 'error');
+          }
+        }).withFailureHandler(err => { showLoading(false); alertMsg('Ralat Pukal: ' + err.message, 'error'); }).saveMembersBulkSecure(sessionStorage.getItem('relaToken'), tempImportQueue);
+    } else {
+      showLoading(false); st.formModal.open = false; st.db.members.push(...tempImportQueue); st.renderData(); alertMsg('Import Berjaya (Mod Demo)'); tempImportQueue = [];
+    }
+  }
+
+  // ==============================================================
+  // --- ENJIN IMPORT JADUAL ROSTER BERKELOMPOK (EXCEL) ---
+  // ==============================================================
+  let tempRosterImportQueue = [];
+  function openImportRosterModalJS() {
+    const st = window.appState;
+    st.formModal.title = 'Import Jadual Syif (Excel)';
+    document.getElementById('form-body-inject').innerHTML = `
+      <div class="space-y-6 page-transition text-center">
+          <div class="p-4 bg-emerald-50 border border-emerald-100 rounded-2xl">
+            <p class="text-[10px] font-bold text-emerald-700 uppercase leading-relaxed">Untuk memudahkan proses, muat turun templat rasmi di bawah yang telah diisi dengan senarai nama dan KP anggota sektor anda. Isi jadual (PAGI, PETANG, MALAM, OFF) and muat naik kembali fail tersebut.</p>
+            <button onclick="downloadRosterTemplateJS()" class="mt-3 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-black text-[10px] uppercase shadow-sm transition-colors"><i class="fas fa-download mr-1"></i> Muat Turun Templat</button>
+          </div>
+          <div class="border-t border-slate-200/60 pt-6">
+            <label class="block text-left text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 ml-2">Muat Naik Fail Excel Yang Telah Diisi (.xlsx)</label>
+            <input type="file" id="roster-upload-file" accept=".xlsx, .xls" class="w-full text-sm text-slate-500 file:mr-4 file:py-3 file:px-6 file:rounded-xl file:border-0 file:text-xs file:font-black file:uppercase file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer border border-slate-200 rounded-2xl bg-white transition-all">
+          </div>
+          <div id="roster-preflight-summary" class="hidden p-4 rounded-2xl text-left border"></div>
+          <div class="flex gap-4 pt-4">
+            <button onclick="processRosterUploadJS()" class="w-1/2 py-4 bg-slate-800 text-white rounded-2xl font-black text-xs uppercase tracking-widest active:scale-95 transition-all">Saring Fail</button>
+            <button id="btn-roster-execute" onclick="executeRosterImportJS()" disabled class="w-1/2 py-4 bg-slate-300 text-slate-500 rounded-2xl font-black text-xs uppercase tracking-widest cursor-not-allowed transition-all">Import</button>
+          </div>
+      </div>
+    `;
+    st.formModal.open = true;
+  }
+
+  function downloadRosterTemplateJS() {
+    const st = window.appState;
+    const maxD = new Date(st.year, st.month, 0).getDate();
+    let mems = st.getFilteredMems();
+    
+    let aoa = [];
+    let header = ['NAMA PETUGAS', 'NO KP (JANGAN UBAH)'];
+    for(let d=1; d<=maxD; d++) header.push(d.toString());
+    aoa.push(header);
+    mems.forEach(m => {
+      let row = [m.nama, m.kp];
+      for(let d=1; d<=maxD; d++) {
+          row.push(st.db.roster[`${m.locId}-${m.id}-${st.year}-${st.month}-${d}`] || '');
+      }
+      aoa.push(row);
+    });
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Templat Jadual");
+    XLSX.writeFile(wb, `Templat_Jadual_${st.locId === 'all' ? 'SEMUA' : st.locId}_${M_SHORT[st.month-1]}_${st.year}.xlsx`);
+  }
+
+  function processRosterUploadJS() {
+    const fileInput = document.getElementById('roster-upload-file');
+    if (!fileInput.files || fileInput.files.length === 0) return alertMsg('Sila muat naik fail Excel terlebih dahulu.', 'warning');
+    
+    showLoading(true);
+    const file = fileInput.files[0];
+    const reader = new FileReader();
+    
+    reader.onload = function(e) {
+        try {
+            const data = new Uint8Array(e.target.result);
+            const wb = XLSX.read(data, {type: 'array'});
+            const ws = wb.Sheets[wb.SheetNames[0]];
+            const json = XLSX.utils.sheet_to_json(ws, {header: 1});
+            
+            const st = window.appState;
+            const maxD = new Date(st.year, st.month, 0).getDate();
+            tempRosterImportQueue = [];
+            let validCount = 0;
+            
+            for (let i = 1; i < json.length; i++) {
+                const row = json[i];
+                if (!row || row.length < 2) continue;
+                let rawKp = String(row[1] || '').replace(/[^0-9]/g, '');
+                if (rawKp.length !== 12) continue;
+                
+                const mem = st.db.members.find(x => String(x.kp).replace(/[^0-9]/g, '') === rawKp);
+                if (!mem) continue;
+                
+                const allowed = st.role === 'admin' ? true : st.allowedLocs.split(',').includes(mem.locId);
+                if (!allowed) continue;
+                for (let d = 1; d <= maxD; d++) {
+                    let val = String(row[d+1] || '').toUpperCase().trim();
+                    let normalized = null;
+                    
+                    if(['PAGI', 'P'].includes(val)) normalized = 'PAGI';
+                    else if(['PETANG', 'PTG', 'PT'].includes(val)) normalized = 'PETANG';
+                    else if(['MALAM', 'M'].includes(val)) normalized = 'MALAM';
+                    else if(['OFF', 'O', 'CUTI', 'X'].includes(val)) normalized = 'OFF';
+                    else if(val === '') normalized = '';
+                    
+                    if(normalized !== null) {
+                        const k = `${mem.locId}-${mem.id}-${st.year}-${st.month}-${d}`;
+                        tempRosterImportQueue.push({key: k, val: normalized});
+                        validCount++;
+                    }
+                }
+            }
+            
+            showLoading(false);
+            const sumBox = document.getElementById('roster-preflight-summary');
+            if (validCount === 0) {
+                sumBox.className = "p-4 bg-rose-50 border border-rose-150 rounded-2xl text-left mt-4 block";
+                sumBox.innerHTML = `<p class="text-[10px] text-rose-600 font-bold"><i class="fas fa-exclamation-circle mr-1"></i> Tiada data jadual sah dijumpai. Pastikan anda menggunakan format templat yang betul.</p>`;
+            } else {
+                sumBox.className = "p-4 bg-emerald-50 border border-emerald-150 rounded-2xl text-left mt-4 block";
+                sumBox.innerHTML = `<p class="text-[10px] text-emerald-700 font-bold"><i class="fas fa-check-circle mr-1"></i> Format disahkan! Sebanyak ${validCount} plot jadual (termasuk kosong) sedia untuk dimasukkan.</p>`;
+                const btn = document.getElementById('btn-roster-execute');
+                btn.disabled = false;
+                btn.className = "w-1/2 py-4 bg-gradient-to-r from-emerald-500 to-teal-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl active:scale-95 cursor-pointer transition-all";
+            }
+        } catch(err) {
+            showLoading(false);
+            console.error(err);
+            alertMsg('Gagal membaca format Excel.', 'error');
+        }
+    };
+    reader.readAsArrayBuffer(file);
+  }
+
+  // Ditambah sokongan silent sync pasca import roster
+  function executeRosterImportJS() {
+    if(tempRosterImportQueue.length === 0) return;
+    const st = window.appState;
+    showLoading(true);
+    if(typeof google !== 'undefined' && google.script) {
+      google.script.run.withSuccessHandler((res) => {
+          showLoading(false);
+          if (res.success) {
+            st.formModal.open = false;
+            st.syncFromServer(false, true); // SILENT BACKGROUND SYNC
+            Swal.fire({ title: 'Import Selesai!', text: `Sejumlah ${res.count} sel jadual berjaya didaftarkan.`, icon: 'success', customClass: { popup: 'rounded-3xl' } });
+            tempRosterImportQueue = [];
+          } else {
+            alertMsg(res.msg, 'error');
+          }
+       }).withFailureHandler(err => {
+          showLoading(false);
+          alertMsg('Ralat Import Roster: ' + err.message, 'error');
+       }).importRosterBulkSecure(sessionStorage.getItem('relaToken'), tempRosterImportQueue);
+    } else {
+      showLoading(false);
+      st.formModal.open = false;
+      // Mod Demo
+      tempRosterImportQueue.forEach(item => {
+          if(item.val === '') delete st.db.roster[item.key];
+          else st.db.roster[item.key] = item.val;
+      });
+      st.renderData();
+      alertMsg('Jadual Diimport (Mod Demo)');
+      tempRosterImportQueue = [];
+    }
+  }
+</script>
