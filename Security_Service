@@ -1,0 +1,106 @@
+/**
+ * SISTEM PENGURUSAN TUNTUTAN ELAUN RELA - BATU PAHAT
+ * Fail: Security_Service.gs (Enjin Penyulitan, Sesi & Brute-Force Rate Limiter)
+ *
+ * Menyediakan fungsi penyulitan sehala SHA-256 bagi perlindungan kata laluan,
+ * pengesanan tracking brute-force log masuk salah, dan validasi jangka hayat token sesi.
+ */
+
+function sha256_(text) {
+  const raw = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, text, Utilities.Charset.UTF_8);
+  return raw.map(b => ('0' + (b & 0xFF).toString(16)).slice(-2)).join('');
+}
+
+function checkLock_(key) {
+  const cache = CacheService.getScriptCache();
+  const lock = cache.get("LOCK_" + key);
+  if (!lock) return null;
+  const data = JSON.parse(lock);
+  if (Date.now() > data.until) {
+    cache.remove("LOCK_" + key);
+    return null;
+  }
+  return data;
+}
+
+function recordFail_(key) {
+  const cache = CacheService.getScriptCache();
+  const failKey = "FAIL_" + key;
+  let count = parseInt(cache.get(failKey) || "0", 10);
+  count++;
+  cache.put(failKey, String(count), 600); // Pembilang fail disimpan selama 10 minit (600 saat)
+  if (count >= 5) {
+    const until = Date.now() + (5 * 60 * 1000); // Kunci selama 5 minit tegar
+    cache.put("LOCK_" + key, JSON.stringify({ until, count }), 300);
+    cache.remove(failKey);
+    return { locked: true, until };
+  }
+  return { locked: false, count };
+}
+
+function resetFail_(key) {
+  const cache = CacheService.getScriptCache();
+  cache.remove("FAIL_" + key);
+  cache.remove("LOCK_" + key);
+}
+
+function createSession_(role, user, locId) {
+  const token = Utilities.getUuid();
+  const exp = Date.now() + (30 * 60 * 1000); // Jangka hayat sesi aktif: 30 Minit
+  const sessObj = { role, user, locId, exp };
+  const sessData = JSON.stringify(sessObj);
+
+  // Simpan di berbilang lapisan storan (ScriptCache, UserCache, UserProperties) untuk daya tahan tinggi
+  try { CacheService.getScriptCache().put("SESS_" + token, sessData, 1800); } catch(e) {}
+  try { CacheService.getUserCache().put("SESS_" + token, sessData, 1800); } catch(e) {}
+  try { PropertiesService.getUserProperties().setProperty("SESS_" + token, sessData); } catch(e) {}
+
+  return { success: true, token, role, user, locId, exp };
+}
+
+function verifySession_(token) {
+  if (!token) return null;
+  
+  let raw = null;
+  
+  // 1. Semak ScriptCache
+  try { raw = CacheService.getScriptCache().get("SESS_" + token); } catch(e) {}
+  
+  // 2. Fallback ke UserCache jika ScriptCache mengalami cache miss
+  if (!raw) {
+    try { raw = CacheService.getUserCache().get("SESS_" + token); } catch(e) {}
+  }
+  
+  // 3. Fallback ke UserProperties jika kedua-dua cache dipurge oleh pelayan GAS
+  if (!raw) {
+    try { raw = PropertiesService.getUserProperties().getProperty("SESS_" + token); } catch(e) {}
+  }
+  
+  if (!raw) return null;
+  
+  let sess = null;
+  try {
+    sess = JSON.parse(raw);
+  } catch(e) {
+    return null;
+  }
+  
+  if (!sess || !sess.exp || Date.now() > sess.exp) {
+    // Sesi telah tamat tempoh, bersihkan daripada semua lapisan storan
+    clearSession_(token);
+    return null;
+  }
+  
+  // Segarkan semula cache supaya sesi berterusan secara lancar (Sliding Renewal)
+  try { CacheService.getScriptCache().put("SESS_" + token, raw, 1800); } catch(e) {}
+  try { CacheService.getUserCache().put("SESS_" + token, raw, 1800); } catch(e) {}
+  
+  return sess;
+}
+
+function clearSession_(token) {
+  if (!token) return;
+  try { CacheService.getScriptCache().remove("SESS_" + token); } catch(e) {}
+  try { CacheService.getUserCache().remove("SESS_" + token); } catch(e) {}
+  try { PropertiesService.getUserProperties().deleteProperty("SESS_" + token); } catch(e) {}
+}
