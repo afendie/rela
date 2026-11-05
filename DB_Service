@@ -39,7 +39,10 @@ function getAppData() {
         id: String(r[0]).trim(),
         name: String(r[1] || '').trim(),
         short: String(r[2] || '').trim(),
-        format: String(r[3] || '8').trim()
+        format: String(r[3] || '8').trim(),
+        lat: String(r[4] || '').trim(),
+        lng: String(r[5] || '').trim(),
+        radius: parseFloat(r[6]) || 300
       });
     }
   });
@@ -257,7 +260,10 @@ function saveMembersBulk(membersArray) {
 // ======================================================================
 function saveLocation(l) {
   const formatVal = String(l.format || '8').trim();
-  return syncRecord('Locations', 0, l.id, [l.id, l.name, l.short, formatVal]);
+  const latVal = String(l.lat || '').trim();
+  const lngVal = String(l.lng || '').trim();
+  const radiusVal = parseFloat(l.radius) || 300;
+  return syncRecord('Locations', 0, l.id, [l.id, l.name, l.short, formatVal, latVal, lngVal, radiusVal]);
 }
 
 function deleteLocation(id) {
