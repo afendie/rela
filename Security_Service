@@ -1,106 +1,125 @@
 /**
  * SISTEM PENGURUSAN TUNTUTAN ELAUN RELA - BATU PAHAT
  * Fail: Security_Service.gs (Enjin Penyulitan, Sesi & Brute-Force Rate Limiter)
- *
+ * 
  * Menyediakan fungsi penyulitan sehala SHA-256 bagi perlindungan kata laluan,
  * pengesanan tracking brute-force log masuk salah, dan validasi jangka hayat token sesi.
  */
 
+// ======================================================================
+// 1. PENYULITAN KRIPTOGRAFI SEHALA SHA-256 KORPORAT
+// ======================================================================
 function sha256_(text) {
-  const raw = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, text, Utilities.Charset.UTF_8);
-  return raw.map(b => ('0' + (b & 0xFF).toString(16)).slice(-2)).join('');
+  try {
+    const raw = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, String(text || ''), Utilities.Charset.UTF_8);
+    return raw.map(b => ('0' + (b & 0xFF).toString(16)).slice(-2)).join('');
+  } catch (e) {
+    return "";
+  }
 }
 
+// ======================================================================
+// 2. MEMERIKSA STATUS SEKATAN LOG MASUK SEMENTARA (BRUTE-FORCE LOCKOUT)
+// ======================================================================
 function checkLock_(key) {
-  const cache = CacheService.getScriptCache();
-  const lock = cache.get("LOCK_" + key);
-  if (!lock) return null;
-  const data = JSON.parse(lock);
-  if (Date.now() > data.until) {
-    cache.remove("LOCK_" + key);
+  try {
+    const cache = CacheService.getScriptCache();
+    const lock = cache.get("LOCK_" + key);
+    if (!lock) return null;
+    
+    const data = JSON.parse(lock);
+    if (Date.now() > data.until) {
+      cache.remove("LOCK_" + key);
+      return null;
+    }
+    return data;
+  } catch (e) {
     return null;
   }
-  return data;
 }
 
+// ======================================================================
+// 3. MEREKOD DAN MEMPROSES KADAR KEGAGALAN CUBAAN LOG MASUK
+// ======================================================================
 function recordFail_(key) {
-  const cache = CacheService.getScriptCache();
-  const failKey = "FAIL_" + key;
-  let count = parseInt(cache.get(failKey) || "0", 10);
-  count++;
-  cache.put(failKey, String(count), 600); // Pembilang fail disimpan selama 10 minit (600 saat)
-  if (count >= 5) {
-    const until = Date.now() + (5 * 60 * 1000); // Kunci selama 5 minit tegar
-    cache.put("LOCK_" + key, JSON.stringify({ until, count }), 300);
-    cache.remove(failKey);
-    return { locked: true, until };
+  try {
+    const cache = CacheService.getScriptCache();
+    const failKey = "FAIL_" + key;
+    let count = parseInt(cache.get(failKey) || "0", 10);
+    count++;
+    cache.put(failKey, String(count), 600); // Simpan pembilang selama 10 minit (600 saat)
+
+    if (count >= 5) {
+      const until = Date.now() + (5 * 60 * 1000); // Kunci selama 5 minit jika salah 5 kali
+      cache.put("LOCK_" + key, JSON.stringify({ until, count }), 300);
+      cache.remove(failKey);
+      return { locked: true, until };
+    }
+    return { locked: false, count };
+  } catch (e) {
+    return { locked: false, count: 0 };
   }
-  return { locked: false, count };
 }
 
+// ======================================================================
+// 4. SET SEMULA KADAR KEGAGALAN APABILA LOG MASUK BERJAYA
+// ======================================================================
 function resetFail_(key) {
-  const cache = CacheService.getScriptCache();
-  cache.remove("FAIL_" + key);
-  cache.remove("LOCK_" + key);
+  try {
+    const cache = CacheService.getScriptCache();
+    cache.remove("FAIL_" + key);
+    cache.remove("LOCK_" + key);
+  } catch (e) {
+    console.error("Gagal menetapkan semula kunci ralat:", e);
+  }
 }
 
+// ======================================================================
+// 5. MENJANA TOKEN SESI RAWAK UUID (12 JAM SESI SYIF LENGKAP)
+// ======================================================================
 function createSession_(role, user, locId) {
-  const token = Utilities.getUuid();
-  const exp = Date.now() + (30 * 60 * 1000); // Jangka hayat sesi aktif: 30 Minit
-  const sessObj = { role, user, locId, exp };
-  const sessData = JSON.stringify(sessObj);
-
-  // Simpan di berbilang lapisan storan (ScriptCache, UserCache, UserProperties) untuk daya tahan tinggi
-  try { CacheService.getScriptCache().put("SESS_" + token, sessData, 1800); } catch(e) {}
-  try { CacheService.getUserCache().put("SESS_" + token, sessData, 1800); } catch(e) {}
-  try { PropertiesService.getUserProperties().setProperty("SESS_" + token, sessData); } catch(e) {}
-
-  return { success: true, token, role, user, locId, exp };
+  try {
+    const token = Utilities.getUuid();
+    const sessionDurationSec = 12 * 60 * 60; // 12 Jam (43,200 saat) bagi menampung syif bertugas penuh
+    const exp = Date.now() + (sessionDurationSec * 1000);
+    
+    CacheService.getScriptCache().put(
+      "SESS_" + token, 
+      JSON.stringify({ role, user, locId, exp }), 
+      sessionDurationSec
+    );
+    
+    return { success: true, token, role, user, locId, exp };
+  } catch (e) {
+    return { success: false, msg: "Gagal menjana sesi pengguna: " + e.message };
+  }
 }
 
+// ======================================================================
+// 6. MENGESAHKAN KESAHIHAN TOKEN & SLIDING EXPIRATION
+// ======================================================================
 function verifySession_(token) {
   if (!token) return null;
-  
-  let raw = null;
-  
-  // 1. Semak ScriptCache
-  try { raw = CacheService.getScriptCache().get("SESS_" + token); } catch(e) {}
-  
-  // 2. Fallback ke UserCache jika ScriptCache mengalami cache miss
-  if (!raw) {
-    try { raw = CacheService.getUserCache().get("SESS_" + token); } catch(e) {}
-  }
-  
-  // 3. Fallback ke UserProperties jika kedua-dua cache dipurge oleh pelayan GAS
-  if (!raw) {
-    try { raw = PropertiesService.getUserProperties().getProperty("SESS_" + token); } catch(e) {}
-  }
-  
+  const cache = CacheService.getScriptCache();
+  const raw = cache.get("SESS_" + token);
   if (!raw) return null;
-  
-  let sess = null;
-  try {
-    sess = JSON.parse(raw);
-  } catch(e) {
-    return null;
-  }
-  
-  if (!sess || !sess.exp || Date.now() > sess.exp) {
-    // Sesi telah tamat tempoh, bersihkan daripada semua lapisan storan
-    clearSession_(token);
-    return null;
-  }
-  
-  // Segarkan semula cache supaya sesi berterusan secara lancar (Sliding Renewal)
-  try { CacheService.getScriptCache().put("SESS_" + token, raw, 1800); } catch(e) {}
-  try { CacheService.getUserCache().put("SESS_" + token, raw, 1800); } catch(e) {}
-  
-  return sess;
-}
 
-function clearSession_(token) {
-  if (!token) return;
-  try { CacheService.getScriptCache().remove("SESS_" + token); } catch(e) {}
-  try { CacheService.getUserCache().remove("SESS_" + token); } catch(e) {}
-  try { PropertiesService.getUserProperties().deleteProperty("SESS_" + token); } catch(e) {}
+  try {
+    const sess = JSON.parse(raw);
+    if (Date.now() > sess.exp) {
+      cache.remove("SESS_" + token);
+      return null;
+    }
+
+    // Mekanisme Sliding Expiration: Perbaharui jangka hayat sesi jika pengguna aktif
+    const remainingTime = sess.exp - Date.now();
+    if (remainingTime < (2 * 60 * 60 * 1000)) { // Baki kurang dari 2 jam
+      const newDurationSec = 6 * 60 * 60; // Tambah 6 jam lagi
+      sess.exp = Date.now() + (newDurationSec * 1000);
+      cache.put("SESS_" + token, JSON.stringify(sess), newDurationSec);
+    }
+    return sess;
+  } catch (e) {
+    return null;
+  }
 }
