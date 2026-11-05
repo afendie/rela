@@ -1,0 +1,35 @@
+/**
+ * SISTEM PENGURUSAN TUNTUTAN ELAUN RELA - BATU PAHAT
+ * Fail: Code.gs (Gerbang Utama API Backend & Penghala Laluan)
+ * * Bertindak sebagai entry-point tunggal bagi aplikasi web Google Apps Script.
+ * Mengelola pemuatan template HTML utama, suntikan fail modular, dan penerimaan log imbasan QR.
+ */
+
+// Menjana dan memaparkan halaman utama sistem
+function doGet(e) {
+  var template = HtmlService.createTemplateFromFile('index');
+  template.webAppUrl = ScriptApp.getService().getUrl();
+  template.scannerUrl = getSettingValue_('github_scanner_url');
+  template.previewUrl = getSettingValue_('github_preview_url');
+  
+  return template.evaluate()
+    .setTitle('RELA - BATU PAHAT')
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1')
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
+
+// Fungsi utiliti untuk menyuntik fail HTML modular ke dalam index.html
+function include(filename) {
+  return HtmlService.createHtmlOutputFromFile(filename).getContent();
+}
+
+// Menerima data imbasan QR daripada peranti pengimbas di lapangan (Handshake API)
+function doPost(e) {
+  try {
+    const payload = JSON.parse(e.postData.contents);
+    const result = processQRScan(payload);
+    return ContentService.createTextOutput(JSON.stringify(result)).setMimeType(ContentService.MimeType.JSON);
+  } catch(err) {
+    return ContentService.createTextOutput(JSON.stringify({success: false, msg: err.message})).setMimeType(ContentService.MimeType.JSON);
+  }
+}
