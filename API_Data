@@ -1,0 +1,424 @@
+/**
+ * SISTEM PENGURUSAN TUNTUTAN ELAUN RELA - BATU PAHAT
+ * Fail: API_Data.gs (Secure CRUD Wrapper, Saringan RBAC & Kawalan Kunci Masa)
+ * 
+ * Saringan keselamatan backend untuk memastikan penyelia hanya boleh menulis pada lokaliti mereka,
+ * dan mengunci manipulasi jadual (roster) & kehadiran mengikut peraturan 5hb bulanan.
+ */
+
+// ======================================================================
+// 1. MEMBACA KESELURUHAN DATA SISTEM DENGAN PENGESAHAN TOKEN
+// ======================================================================
+function getSecureAppData(token) {
+  try {
+    const sess = verifySession_(token);
+    if (!sess) return { success: false, msg: "Sesi tamat. Sila log masuk semula." };
+
+    const db = getAppData();
+    // Sembunyikan kata laluan penyelia daripada dihantar ke sisi pelanggan demi keselamatan
+    db.supervisors = db.supervisors.map(s => ({ 
+      id: s.id, 
+      name: s.name, 
+      locId: s.locId, 
+      email: s.email 
+    }));
+    return { success: true, session: sess, db: db };
+  } catch (err) {
+    return { success: false, msg: "Ralat membaca data: " + err.message };
+  }
+}
+
+// ======================================================================
+// 2. MENYIMPAN KEMASUKAN KALENDAR TUNGGAL (AUDIT-LOCK GATEKEEPER)
+// ======================================================================
+function saveCalendarEntrySecure(token, mode, key, val) {
+  try {
+    const sess = verifySession_(token);
+    if (!sess) return { success: false, msg: "Sesi tamat." };
+
+    if (sess.role === "penyelia") {
+      const recordLoc = key.split('-')[0];
+      if (!sess.locId.split(',').includes(recordLoc)) {
+        return { success: false, msg: "Akses Ditolak: Lokaliti di luar tanggungjawab rasmi jagaan anda." };
+      }
+
+      const parts = key.split('-');
+      if (parts.length >= 5) {
+        const tY = parseInt(parts[2], 10);
+        const tM = parseInt(parts[3], 10);
+
+        const klTimeStr = new Date().toLocaleString("en-US", { timeZone: "Asia/Kuala_Lumpur" });
+        const klTime = new Date(klTimeStr);
+        const currY = klTime.getFullYear();
+        const currM = klTime.getMonth() + 1;
+        const currD = klTime.getDate();
+
+        // 1. Semak sekiranya bulan target telah dikunci secara manual dari Tetapan
+        const globalLockKey = `lock_${tY}_${tM}`;
+        if (getSettingValue_(globalLockKey) === 'true') {
+          return { success: false, msg: "Akses Ditolak: Rekod bulan ini telah dikunci sepenuhnya oleh Pentadbir." };
+        }
+
+        const selectedDate = new Date(tY, tM - 1, 1);
+        const currentDate = new Date(currY, currM - 1, 1);
+
+        if (mode === 'ros') {
+          // Roster: Roster disekat selepas tarikh akhir 5hb semasa bagi menghalang penipuan rancangan tugas
+          if (selectedDate < currentDate) {
+            if (currD >= 5) {
+              return { success: false, msg: "Akses Ditolak: Jadual tugas bulan lepas telah dikunci secara kekal untuk audit." };
+            }
+          } else if (selectedDate.getTime() === currentDate.getTime()) {
+            if (currD >= 5) {
+              return { success: false, msg: "Akses Ditolak: Jadual tugas bulan semasa telah dikunci secara automatik selepas 5hb." };
+            }
+          }
+        } else if (mode === 'att') {
+          // Kehadiran: Penguncian automatik 5hb bulan semasa untuk kehadiran bulan lepas
+          if (selectedDate < currentDate) {
+            if (currD >= 5) {
+              return { success: false, msg: "Akses Ditolak: Kehadiran bulan lepas telah dikunci secara kekal untuk audit." };
+            }
+          } else if (selectedDate.getTime() === currentDate.getTime()) {
+            if (currD >= 5) {
+              // "Hanya lock jika tiada maklumat jam bertugas anggota pada hari tersebut"
+              const db = getAppData();
+              const existingVal = db.attendance[key];
+              if (!existingVal || existingVal === '' || existingVal === 'X' || existingVal === 'OFF') {
+                return { success: false, msg: "Akses Ditolak: Anda disekat daripada menambah rekod kehadiran baharu selepas tarikh akhir 5hb." };
+              }
+            }
+          } else {
+            return { success: false, msg: "Akses Ditolak: Kehadiran masa hadapan tidak dibenarkan." };
+          }
+        }
+      }
+    }
+
+    saveCalendarEntry(mode, key, val);
+    return { success: true };
+  } catch (err) {
+    return { success: false, msg: "Ralat simpan kalendar: " + err.message };
+  }
+}
+
+// ======================================================================
+// 3. SIMPANAN PUKAL KALENDAR SECARA PANTAS (IN-MEMORY VALIDATION)
+// ======================================================================
+function saveCalendarEntriesBulkSecure(token, mode, updates) {
+  try {
+    const sess = verifySession_(token);
+    if (!sess) return { success: false, msg: "Sesi tamat." };
+
+    const klTimeStr = new Date().toLocaleString("en-US", { timeZone: "Asia/Kuala_Lumpur" });
+    const klTime = new Date(klTimeStr);
+    const currY = klTime.getFullYear();
+    const currM = klTime.getMonth() + 1;
+    const currD = klTime.getDate();
+    const allowedArr = sess.locId.split(',');
+
+    // Ambil keseluruhan pangkalan data termasuk Settings secara segerak dalam SATU (1) kali sahaja
+    const db = getAppData();
+    const settings = db.settings;
+
+    // Validasi RBAC dan Kunci Keselamatan bagi setiap hari di dalam senarai kemaskini kelompok
+    for (let i = 0; i < updates.length; i++) {
+      const key = updates[i].key;
+      const recordLoc = key.split('-')[0];
+
+      // Pastikan penyelia hanya ubah data lokasi mereka
+      if (sess.role !== "admin" && !allowedArr.includes(recordLoc)) {
+        return { success: false, msg: `Ralat Pukal: Mengesan sel bertugas bagi lokaliti terlarang (${recordLoc}). Operasi dibatalkan.` };
+      }
+
+      const parts = key.split('-');
+      if (parts.length >= 5) {
+        const year = parseInt(parts[2], 10);
+        const month = parseInt(parts[3], 10);
+
+        // Semakan Audit Manual - Membaca terus dari fail konfigurasi dalam memori
+        if (sess.role !== "admin") {
+          const lockKey = `lock_${year}_${month}`;
+          if (settings[lockKey] === 'true') {
+            return { success: false, msg: `Ralat Pukal: Rekod bulan penugasan ini (${month}/${year}) telah dikunci oleh Pentadbir.` };
+          }
+        }
+
+        // Semakan Audit Sesi Roster & Kehadiran (5hb)
+        if (sess.role !== "admin") {
+          const selectedDate = new Date(year, month - 1, 1);
+          const currentDate = new Date(currY, currM - 1, 1);
+
+          if (selectedDate < currentDate && currD >= 5) {
+            return { success: false, msg: "Ralat Pukal: Sesi penugasan bulan lepas telah dikunci sepenuhnya." };
+          }
+          if (mode === 'ros' && selectedDate.getTime() === currentDate.getTime() && currD >= 5) {
+            return { success: false, msg: "Ralat Pukal: Jadual tugas bulan semasa telah dikunci secara automatik." };
+          }
+          if (mode === 'att' && selectedDate.getTime() === currentDate.getTime() && currD >= 5) {
+            // Hanya benarkan edit jika data kehadiran asal sedia ada
+            const existingVal = db.attendance[key];
+            if (!existingVal || existingVal === '' || existingVal === 'X' || existingVal === 'OFF') {
+              return { success: false, msg: "Ralat Pukal: Disekat daripada mendaftarkan baris kehadiran kosong baharu selepas tarikh akhir 5hb." };
+            }
+          }
+        }
+      }
+    }
+
+    // Melakukan penulisan fizikal melintang secara kelompok
+    const success = saveCalendarEntriesBulk(mode, updates);
+    if (success) {
+      return { success: true };
+    } else {
+      return { success: false, msg: "Gagal menyimpan rekod secara kelompok pukal." };
+    }
+  } catch (err) {
+    return { success: false, msg: "Ralat simpan pukal kalendar: " + err.message };
+  }
+}
+
+// ======================================================================
+// 4. IMPORT JADUAL ROSTER SECARA PUKAL (EXCEL IMPORTER)
+// ======================================================================
+function importRosterBulkSecure(token, updates) {
+  try {
+    const sess = verifySession_(token);
+    if (!sess) return { success: false, msg: "Sesi tamat." };
+
+    const klTimeStr = new Date().toLocaleString("en-US", { timeZone: "Asia/Kuala_Lumpur" });
+    const klTime = new Date(klTimeStr);
+    const currY = klTime.getFullYear();
+    const currM = klTime.getMonth() + 1;
+    const currD = klTime.getDate();
+    const allowedArr = sess.locId.split(',');
+
+    const db = getAppData();
+    const settings = db.settings;
+
+    // Validasi RBAC dan Kunci Keselamatan sebelum menerima pakej kelompok jadual
+    for (let i = 0; i < updates.length; i++) {
+      const parts = updates[i].key.split('-');
+      if (parts.length < 5) continue;
+
+      const locId = parts[0];
+      const year = parseInt(parts[2], 10);
+      const month = parseInt(parts[3], 10);
+
+      if (sess.role !== "admin" && !allowedArr.includes(locId)) {
+        return { success: false, msg: `Ralat Pukal: Mengesan sel jadual bagi lokaliti terlarang (${locId}). Import dibatalkan.` };
+      }
+
+      if (sess.role !== "admin") {
+        const lockKey = `lock_${year}_${month}`;
+        if (settings[lockKey] === 'true') {
+          return { success: false, msg: `Ralat Pukal: Bulan penugasan ini (${month}/${year}) telah dikunci secara manual oleh Pentadbir.` };
+        }
+
+        const selectedDate = new Date(year, month - 1, 1);
+        const currentDate = new Date(currY, currM - 1, 1);
+
+        if (selectedDate < currentDate && currD >= 5) {
+          return { success: false, msg: "Ralat Pukal: Jadual tugas bulan lepas telah dikunci sepenuhnya." };
+        }
+        if (selectedDate.getTime() === currentDate.getTime() && currD >= 5) {
+          return { success: false, msg: "Ralat Pukal: Mengunci rancangan jadual baharu selepas 5hb bulan semasa." };
+        }
+      }
+    }
+
+    const success = saveCalendarEntriesBulk('ros', updates);
+    if (success) {
+      return { success: true, count: updates.length };
+    } else {
+      return { success: false, msg: "Gagal menyimpan rekod jadual secara pukal." };
+    }
+  } catch (err) {
+    return { success: false, msg: "Ralat import jadual: " + err.message };
+  }
+}
+
+// ======================================================================
+// 5. PAKSA KELUAR PUKAL (BULK FORCE CLOCK-OUT DENGAN FORMAT DINAMIK)
+// ======================================================================
+function bulkForceClockOutSecure(token, keysToReset) {
+  try {
+    const sess = verifySession_(token);
+    if (!sess) return { success: false, msg: "Sesi tamat." };
+
+    if (sess.role === "penyelia") {
+      const allowedArr = sess.locId.split(',');
+      for (let i = 0; i < keysToReset.length; i++) {
+        const recordLoc = keysToReset[i].split('-')[0];
+        if (!allowedArr.includes(recordLoc)) {
+          return { success: false, msg: "Akses Ditolak: Senarai ini mengandungi cawangan di luar sektor jagaan anda." };
+        }
+      }
+    }
+
+    const db = getAppData();
+    const updates = [];
+
+    keysToReset.forEach(key => {
+      const locId = key.split('-')[0];
+      const locObj = db.locations.find(l => l.id === locId) || {};
+      let defaultFormat = parseFloat(locObj.format || 8);
+      if (isNaN(defaultFormat) || defaultFormat <= 0) defaultFormat = 8;
+
+      const finalVal = `${defaultFormat}|SISTEM: AUTO-RESET BULK`;
+      updates.push({ key: key, val: finalVal });
+    });
+
+    const success = saveCalendarEntriesBulk('att', updates);
+    if (success) {
+      return { success: true, count: keysToReset.length };
+    } else {
+      return { success: false, msg: "Gagal menyimpan rekod clock-out secara pukal." };
+    }
+  } catch (err) {
+    return { success: false, msg: "Ralat sapu bersih: " + err.message };
+  }
+}
+
+// ======================================================================
+// 6. URUS PROFIL ANGGOTA (RBAC & INTEGRITI DATA)
+// ======================================================================
+function saveMemberSecure(token, m) {
+  try {
+    const sess = verifySession_(token);
+    if (!sess) return { success: false, msg: "Sesi tamat." };
+
+    if (sess.role === "penyelia") {
+      const allowCrud = getSettingValue_('allow_supervisor_member_crud') === 'true';
+      if (!allowCrud) {
+        return { success: false, msg: "Akses Ditolak: Kuasa mendaftar/kemaskini profil anggota disekat oleh Pentadbir (TPRD)." };
+      }
+      if (!sess.locId.split(',').includes(m.locId)) {
+        return { success: false, msg: "Akses Ditolak: Lokaliti pendaftaran ini di luar sektor jagaan anda." };
+      }
+    }
+
+    saveMember(m);
+    return { success: true };
+  } catch (err) {
+    return { success: false, msg: "Ralat simpan anggota: " + err.message };
+  }
+}
+
+function deleteMemberSecure(token, id) {
+  try {
+    const sess = verifySession_(token);
+    if (!sess) return { success: false, msg: "Sesi tamat." };
+
+    if (sess.role === "penyelia") {
+      const allowCrud = getSettingValue_('allow_supervisor_member_crud') === 'true';
+      if (!allowCrud) {
+        return { success: false, msg: "Akses Ditolak: Kuasa memadam anggota disekat oleh Pentadbir (TPRD)." };
+      }
+      const db = getAppData();
+      const m = db.members.find(x => x.id === id);
+      if (!m || !sess.locId.split(',').includes(m.locId)) {
+        return { success: false, msg: "Akses Ditolak: Profil anggota tiada atau di luar sektor jagaan anda." };
+      }
+    } else if (sess.role !== "admin") {
+      return { success: false, msg: "Akses ditolak." };
+    }
+
+    deleteMember(id);
+    return { success: true };
+  } catch (err) {
+    return { success: false, msg: "Ralat padam anggota: " + err.message };
+  }
+}
+
+function saveMembersBulkSecure(token, membersArray) {
+  try {
+    const sess = verifySession_(token);
+    if (!sess) return { success: false, msg: "Sesi tamat." };
+
+    if (sess.role === "penyelia") {
+      const allowCrud = getSettingValue_('allow_supervisor_member_crud') === 'true';
+      if (!allowCrud) {
+        return { success: false, msg: "Akses Ditolak: Kebolehan mengimport profil disekat oleh Pentadbir (TPRD)." };
+      }
+      const invalidMember = membersArray.find(m => !sess.locId.split(',').includes(m.locId));
+      if (invalidMember) {
+        return { success: false, msg: "Akses Ditolak: Fail import mengandungi kod sektor di luar tanggungjawab jagaan anda." };
+      }
+    }
+
+    saveMembersBulk(membersArray);
+    return { success: true };
+  } catch (err) {
+    return { success: false, msg: "Ralat import pukal anggota: " + err.message };
+  }
+}
+
+// ======================================================================
+// 7. URUS CAWANGAN (LOKASI) - HAK EKSKLUSIF ADMIN
+// ======================================================================
+function saveLocationSecure(token, l) {
+  try {
+    const sess = verifySession_(token);
+    if (!sess || sess.role !== "admin") return { success: false, msg: "Akses ditolak. Modul ini adalah hak eksklusif Admin." };
+    saveLocation(l);
+    return { success: true };
+  } catch (err) {
+    return { success: false, msg: "Ralat simpan cawangan: " + err.message };
+  }
+}
+
+function deleteLocationSecure(token, id) {
+  try {
+    const sess = verifySession_(token);
+    if (!sess || sess.role !== "admin") return { success: false, msg: "Akses ditolak. Modul ini adalah hak eksklusif Admin." };
+    deleteLocation(id);
+    return { success: true };
+  } catch (err) {
+    return { success: false, msg: "Ralat padam cawangan: " + err.message };
+  }
+}
+
+// ======================================================================
+// 8. URUS AKAUN PENYELIA - HAK EKSKLUSIF ADMIN
+// ======================================================================
+function saveSupervisorSecure(token, s) {
+  try {
+    const sess = verifySession_(token);
+    if (!sess || sess.role !== "admin") return { success: false, msg: "Akses ditolak. Modul ini adalah hak eksklusif Admin." };
+    
+    // Encrypt kata laluan hanya jika ia dihantar sebagai teks mentah (belum di-hash)
+    if (s.pass && s.pass.length < 40) {
+      s.pass = sha256_(s.pass);
+    }
+    saveSupervisor(s);
+    return { success: true };
+  } catch (err) {
+    return { success: false, msg: "Ralat simpan penyelia: " + err.message };
+  }
+}
+
+function deleteSupervisorSecure(token, id) {
+  try {
+    const sess = verifySession_(token);
+    if (!sess || sess.role !== "admin") return { success: false, msg: "Akses ditolak. Modul ini adalah hak eksklusif Admin." };
+    deleteSupervisor(id);
+    return { success: true };
+  } catch (err) {
+    return { success: false, msg: "Ralat padam penyelia: " + err.message };
+  }
+}
+
+// ======================================================================
+// 9. KONFIGURASI SISTEM PUKAL - HAK EKSKLUSIF ADMIN
+// ======================================================================
+function saveSettingsBulkSecure(token, obj) {
+  try {
+    const sess = verifySession_(token);
+    if (!sess || sess.role !== "admin") return { success: false, msg: "Akses ditolak." };
+    saveSettingsBulk(obj);
+    return { success: true };
+  } catch (err) {
+    return { success: false, msg: "Ralat simpan tetapan: " + err.message };
+  }
+}
