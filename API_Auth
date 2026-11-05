@@ -89,6 +89,24 @@ function logoutUser(token) {
 }
 
 // ======================================================================
+// PEMBAHARUAN SESI AKTIF (PING / HEARTBEAT KEEP-ALIVE)
+// ======================================================================
+function extendUserSession(token) {
+  try {
+    const sess = verifySession_(token);
+    if (!sess) return { success: false, msg: "Sesi telah tamat tempoh." };
+    
+    const cache = CacheService.getScriptCache();
+    const newDurationSec = 6 * 60 * 60; // Lanjut 6 jam lagi
+    sess.exp = Date.now() + (newDurationSec * 1000);
+    cache.put("SESS_" + token, JSON.stringify(sess), newDurationSec);
+    return { success: true, exp: sess.exp };
+  } catch (err) {
+    return { success: false, msg: err.message };
+  }
+}
+
+// ======================================================================
 // 4. PENJANAAN DAN PENGHANTARAN OTP
 // ======================================================================
 function sendOTP(email) {
@@ -102,9 +120,8 @@ function sendOTP(email) {
 
     if (!userFound) return { success: false, msg: "E-mel ini tidak ditemui di dalam pangkalan data." };
 
-    // Jana 6-digit OTP rawak
     const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
-    CacheService.getScriptCache().put("OTP_" + emailClean, otpCode, 300); // Sah 5 minit (300s)
+    CacheService.getScriptCache().put("OTP_" + emailClean, otpCode, 300);
 
     MailApp.sendEmail(
       emailClean,
@@ -135,14 +152,12 @@ function verifyOTPAndResetPassword(email, otp, newPass) {
     const hashedPass = sha256_(String(newPass).trim());
     const db = getAppData();
 
-    // Jika e-mel adalah milik pentadbir
     if (emailClean === String(db.settings.admin_email).trim().toLowerCase()) {
       syncRecord("Settings", 0, "admin_pass_hash", ["admin_pass_hash", hashedPass]);
       cache.remove("OTP_" + emailClean);
       return { success: true, msg: "Kata laluan Pentadbir (TPRD) berjaya ditukar." };
     }
 
-    // Jika e-mel adalah milik penyelia
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     const sheet = ss.getSheetByName("Supervisors");
     if (!sheet) return { success: false, msg: "Ralat: Tab Supervisors tiada." };
