@@ -1,0 +1,160 @@
+<style>
+  /* ==============================================================
+     SISTEM PENGURUSAN TUNTUTAN ELAUN RELA - BATU PAHAT
+     Fail: Styles.html (Master CSS Stylesheet - Versi 10 Premium)
+     ============================================================== */
+
+  :root { 
+    --primary: #1e3a8a; 
+    --secondary: #0f172a; 
+    --accent: #3b82f6; 
+    --accent-glow: rgba(59, 130, 246, 0.4);
+    --success: #10b981;
+    --success-glow: rgba(16, 185, 129, 0.3);
+    --warning: #f59e0b;
+    --warning-glow: rgba(245, 158, 11, 0.3);
+    --danger: #ef4444;
+    --danger-glow: rgba(239, 68, 68, 0.3);
+  }
+  
+  /* Aturan Asas Tubuh & Tipografi */
+  body { 
+    font-family: 'Plus Jakarta Sans', sans-serif; 
+    background-color: #f1f5f9; 
+    color: #1e293b; 
+    -webkit-tap-highlight-color: transparent; 
+    letter-spacing: -0.01em;
+  }
+  
+  /* Memastikan Tindihan Swal2 Sentiasa di Atas Semua Modal Sistem */
+  .swal2-container { 
+    z-index: 99999 !important; 
+  }
+  
+  /* Reka Bentuk Kad Kaca Korporat Premium (Glassmorphism UI) */
+  .glass-card { 
+    background: rgba(255, 255, 255, 0.85); 
+    backdrop-filter: blur(16px); 
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgba(255, 255, 255, 0.6); 
+    box-shadow: 0 4px 20px -2px rgba(15, 23, 42, 0.04), 0 2px 8px -1px rgba(15, 23, 42, 0.02); 
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .glass-card:hover {
+    box-shadow: 0 12px 30px -4px rgba(15, 23, 42, 0.08), 0 4px 12px -2px rgba(15, 23, 42, 0.04);
+  }
+  
+  /* Reka Bentuk Sidebar Kaca Gelap Mewah */
+  .glass-dark { 
+    background: rgba(15, 23, 42, 0.95); 
+    backdrop-filter: blur(24px); 
+    -webkit-backdrop-filter: blur(24px);
+    border-right: 1px solid rgba(255, 255, 255, 0.08); 
+  }
+  
+  /* Rekabentuk Butang Aktif Rangka Sisi (Sidebar Navigation) */
+  .sidebar-active { 
+    color: #ffffff !important; 
+    background: var(--accent); 
+    box-shadow: 0 10px 20px -3px var(--accent-glow); 
+    transform: translateY(-1px);
+  }
+  
+  /* Membunuh Paparan Bar Skrol Standard Tetapi Mengekalkan Fungsi Leretan */
+  .hide-scrollbar::-webkit-scrollbar { 
+    display: none; 
+  }
+  
+  .hide-scrollbar { 
+    -ms-overflow-style: none; 
+    scrollbar-width: none; 
+  }
+
+  /* Kustomisasi Bar Skrol Moden bagi Pelayar Desktop */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 9999px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
+  }
+  
+  /* Animasi Transisi Kemasukan Halaman Lembut (Page Entry Effect) */
+  .page-transition { 
+    animation: fadeIn 0.45s cubic-bezier(0.4, 0, 0.2, 1) forwards; 
+  }
+  
+  @keyframes fadeIn { 
+    from { 
+      opacity: 0; 
+      transform: translateY(12px); 
+    } 
+    to { 
+      opacity: 1; 
+      transform: translateY(0); 
+    } 
+  }
+  
+  /* Bekas Leretan Hari Berasaskan Snap (Tarikh Kehadiran & Roster Rata) */
+  .snap-x-container { 
+    display: flex; 
+    overflow-x: auto; 
+    scroll-snap-type: x mandatory; 
+    -webkit-overflow-scrolling: touch; 
+    scroll-behavior: smooth; 
+    padding-bottom: 10px; 
+  }
+  
+  .snap-item { 
+    scroll-snap-align: center; 
+    flex-shrink: 0; 
+  }
+
+  /* Animasi Pulse Bercahaya bagi Status Radar Aktif */
+  .glow-active-indicator {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+    animation: pulseGlow 1.8s infinite cubic-bezier(0.66, 0, 0, 1);
+  }
+
+  @keyframes pulseGlow {
+    to {
+      box-shadow: 0 0 0 12px rgba(16, 185, 129, 0);
+    }
+  }
+
+  /* Mod Kiosk QR Bercahaya Elegan */
+  .kiosk-qr-glowing-border {
+    box-shadow: 0 0 25px 5px rgba(16, 185, 129, 0.15);
+    border: 3px solid rgba(16, 185, 129, 0.4);
+  }
+
+  /* Memperkemas Visual Form Inputs Semasa Focus */
+  input:focus, select:focus, textarea:focus {
+    box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.12) !important;
+  }
+
+  /* Reka Bentuk Custom Teks Input Autofill */
+  input:-webkit-autofill,
+  input:-webkit-autofill:hover, 
+  input:-webkit-autofill:focus {
+    -webkit-box-shadow: 0 0 0px 1000px #ffffff inset !important;
+    transition: background-color 5000s ease-in-out 0s;
+  }
+
+  /* Pengendalian Tap Skrin Pantas Peranti Mudah Alih */
+  .active-tap-scale:active {
+    transform: scale(0.97);
+    transition: transform 0.1s ease;
+  }
+</style>
