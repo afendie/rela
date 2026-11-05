@@ -1,0 +1,1145 @@
+<script>
+  // ==============================================================
+  // 1. PEMBOLEHUBAH GLOBAL & UTILITI PEMBANTU (HELPERS)
+  // ==============================================================
+  const M_NAMES = ["Januari", "Februari", "Mac", "April", "Mei", "Jun", "Julai", "Ogos", "September", "Oktober", "November", "Disember"];
+  const M_SHORT = ["JAN", "FEB", "MAC", "APR", "MEI", "JUN", "JUL", "OGO", "SEP", "OKT", "NOV", "DIS"];
+
+  // Format mata wang Ringgit Malaysia (RM) secara standard
+  const formatRM = v => parseFloat(v || 0).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  let globalLoadTimer;
+
+  // Penunjuk animasi memuatkan data (Spinner Overlay) dengan kawalan keselamatan masa tamat (timeout)
+  const showLoading = (s) => {
+    document.dispatchEvent(new CustomEvent('toggle-loading', { detail: s }));
+    clearTimeout(globalLoadTimer);
+    if (s) {
+      globalLoadTimer = setTimeout(() => {
+        document.dispatchEvent(new CustomEvent('toggle-loading', { detail: false }));
+        Swal.fire({
+          title: 'Masa Tamat Sambungan',
+          text: 'Google Apps Script lambat membalas atau pangkalan data sedang sibuk. Sila cuba seketika lagi.',
+          icon: 'warning',
+          confirmButtonText: 'Selesai',
+          customClass: { popup: 'rounded-3xl' }
+        });
+      }, 25000); // 25 saat untuk keselamatan
+    }
+  };
+
+  // Paparan mesej makluman pantas (toast alert) berasaskan SweetAlert2
+  const alertMsg = (msg, type = 'success') => Swal.fire({
+    title: type === 'success' ? 'Berjaya' : 'Ralat',
+    text: msg,
+    icon: type,
+    toast: true,
+    position: 'top-end',
+    showConfirmButton: false,
+    timer: 3000,
+    customClass: { popup: 'rounded-2xl' }
+  });
+
+  // ==============================================================
+  // 2. ENJIN SOKONGAN PENGIRAAN GAJI & SARINGAN UTAMA
+  // ==============================================================
+  function calcMemberStats(mId, state) {
+    /* JIKA data anggota telah dikira dalam sesi render ini, kembalikan serta-merta tanpa pemprosesan semula */
+    if (state.statsCache && state.statsCache[mId]) {
+      return state.statsCache[mId];
+    }
+
+    const max = new Date(state.year, state.month, 0).getDate();
+    let hrs = 0, days = 0;
+    let totalAllowance = 0;
+    let totalIncentive = 0;
+
+    // Dioptimumkan: Menggunakan Map O(1) yang telah diindeks untuk kelajuan carian ekstrem
+    const m = (state.membersMap && state.membersMap[mId]) || state.db.members.find(x => x.id === mId) || {};
+    const loc = (state.locId === 'all' || state.allowedLocs.includes(',') || state.page === 'reports') ? m.locId : state.locId;
+
+    // Dioptimumkan: Menggunakan parameter tetapan yang telah dipra-proses di peringkat permulaan render
+    const sObj = state.parsedSettings || {
+      otActive: state.db.settings.ot_rule_active === 'true',
+      otMaxHrs: parseFloat(state.db.settings.ot_normal_max_hrs || 8),
+      otRate: parseFloat(state.db.settings.ot_rate_per_hr || 8.00),
+      dailyIncRate: parseFloat(state.db.settings.nbc_incentive_rate || 30.00),
+      otLocs: (state.db.settings.ot_enabled_locations || '').split(','),
+      enabledLocs: (state.db.settings.nbc_enabled_locations || '').split(',')
+    };
+
+    const isOtEnabledForLoc = sObj.otLocs.includes(loc);
+    const isNbcEnabled = sObj.enabledLocs.includes(loc);
+
+    for (let d = 1; d <= max; d++) {
+      const k = `${loc}-${mId}-${state.year}-${state.month}-${d}`;
+      const v = state.db.attendance[k];
+
+      // PERINGATAN: Jangan kira elaun sekiranya sedang bertugas aktif (IN) atau laporan menunggu pengesahan (?)
+      if (v && v !== 'X' && v !== 'OFF' && !v.startsWith('IN:') && !v.includes('?')) {
+        const dailyHrs = parseFloat(v);
+        if (!isNaN(dailyHrs) && dailyHrs > 0) {
+          hrs += dailyHrs;
+          days++;
+
+          // Pengiraan Split-Rate Overtime jika aktif bagi lokasi berkenaan
+          if (sObj.otActive && isOtEnabledForLoc && dailyHrs > sObj.otMaxHrs) {
+            const normalHrs = sObj.otMaxHrs;
+            const otHrs = dailyHrs - sObj.otMaxHrs;
+            totalAllowance += (normalHrs * (parseFloat(m.kadar) || 0)) + (otHrs * sObj.otRate);
+          } else {
+            totalAllowance += dailyHrs * (parseFloat(m.kadar) || 0);
+          }
+
+          // Tambah Insentif Kolaborasi PGA jika berkelayakan
+          if (isNbcEnabled) {
+            totalIncentive += sObj.dailyIncRate;
+          }
+        }
+      }
+    }
+
+    const result = { 
+      hrs: Number(hrs.toFixed(2)), 
+      dys: days, 
+      allowance: totalAllowance, 
+      incentive: totalIncentive, 
+      total: totalAllowance + totalIncentive 
+    };
+
+    // Simpan hasil kiraan ke dalam cache render aktif
+    if (state.statsCache) {
+      state.statsCache[mId] = result;
+    }
+    return result;
+  }
+
+  // Menyenaraikan laporan lapor kendiri yang memerlukan pengesahan (Penyelia/Admin)
+  function getPendingApprovals(state) {
+    let pendings = [];
+    for (let key in state.db.attendance) {
+      const val = String(state.db.attendance[key]);
+      if (val.includes('?')) {
+        const parts = key.split('-');
+        if (parts.length >= 5) {
+          const kLoc = parts[0];
+          const kMem = parts[1];
+          const kYear = parseInt(parts[2], 10);
+          const kMonth = parseInt(parts[3], 10);
+          const kDay = parseInt(parts[4], 10);
+
+          if (kYear === state.year && kMonth === state.month) {
+            const isAllowed = state.role === 'admin' ? true : state.allowedLocs.split(',').includes(kLoc);
+            const isCurrentView = state.locId === 'all' ? true : state.locId === kLoc;
+            if (isAllowed && isCurrentView) {
+              const mem = (state.membersMap && state.membersMap[kMem]) || state.db.members.find(m => m.id === kMem);
+              if (mem) {
+                const rosterVal = state.db.roster[key] || 'KOSONG';
+                // Penanda risiko penipuan: Lapor kehadiran pada hari yang tiada jadual kerja
+                const isFraudRisk = rosterVal === 'OFF' || rosterVal === 'CUTI' || rosterVal === 'X' || rosterVal.includes('KOSONG');
+                pendings.push({
+                  key: key,
+                  nama: mem.nama,
+                  day: kDay,
+                  val: val.replace('?', ''),
+                  rosterVal: rosterVal,
+                  isFraudRisk: isFraudRisk
+                });
+              }
+            }
+          }
+        }
+      }
+    }
+    return pendings.sort((a, b) => b.day - a.day);
+  }
+
+  // Mengesan anggota yang sedang bertugas aktif di lapangan (Clocked In)
+  function getActiveWorkers(state) {
+    let active = [];
+    for (let key in state.db.attendance) {
+      const val = String(state.db.attendance[key]);
+      if (val.startsWith('IN:')) {
+        const parts = key.split('-');
+        const kLoc = parts[0];
+        const kMem = parts[1];
+        const isAllowed = state.role === 'admin' ? true : state.allowedLocs.split(',').includes(kLoc);
+        const isCurrentView = state.locId === 'all' ? true : state.locId === kLoc;
+        if (isAllowed && isCurrentView) {
+          const mem = (state.membersMap && state.membersMap[kMem]) || state.db.members.find(m => m.id === kMem);
+          if (mem) {
+            const inMs = parseInt(val.replace('IN:', ''), 10);
+            const diffHours = ((Date.now() - inMs) / 3600000).toFixed(1);
+            const inTime = new Date(inMs).toLocaleTimeString('en-MY', { hour: '2-digit', minute: '2-digit', hour12: true });
+            const locShort = state.db.locations.find(l => l.id === kLoc)?.short || kLoc;
+            active.push({ key: key, nama: mem.nama, loc: locShort, hours: diffHours, inTime: inTime });
+          }
+        }
+      }
+    }
+    return active;
+  }
+
+  // Meluluskan laporan kendiri anggota berserta semakan amaran jadual kerja (Optimistic UI)
+  function approvePendingJS(key, cleanVal) {
+    const st = window.appState;
+    const parts = key.split('-');
+    if (parts.length < 5) return;
+    const memId = parts[1];
+    const m = (st.membersMap && st.membersMap[memId]) || st.db.members.find(x => x.id === memId) || { nama: 'Anggota' };
+
+    const rosterVal = st.db.roster[key] || 'KOSONG';
+    const isFraudRisk = rosterVal === 'OFF' || rosterVal === 'CUTI' || rosterVal === 'X' || rosterVal.includes('KOSONG');
+
+    let alertConfig = {
+      title: 'Sahkan Kehadiran?',
+      html: '',
+      icon: 'question',
+      showCancelButton: true,
+      confirmButtonColor: '#10b981',
+      cancelButtonColor: '#94a3b8',
+      confirmButtonText: 'Ya, Sahkan Rekod',
+      cancelButtonText: 'Batal',
+      customClass: { popup: 'rounded-3xl' }
+    };
+
+    if (isFraudRisk) {
+      alertConfig.icon = 'warning';
+      alertConfig.confirmButtonColor = '#ef4444';
+      alertConfig.confirmButtonText = 'Abaikan Amaran & Sahkan';
+      alertConfig.html = `
+        <div class="mb-4"><p class="text-sm font-bold text-slate-700">Mengesahkan rekod Lapor Kendiri <b>${cleanVal} Jam</b> untuk <b>${m.nama}</b>?</p></div>
+        <div class="p-4 bg-rose-50 border border-rose-200 rounded-2xl text-left">
+          <p class="text-xs font-black text-rose-600 uppercase tracking-widest mb-1"><i class="fas fa-exclamation-triangle mr-1"></i> Amaran Semakan Jadual!</p>
+          <p class="text-[10px] font-bold text-rose-500 uppercase leading-relaxed">Sistem mendapati anggota ini <b>TIDAK DIJADUALKAN BEKERJA (${rosterVal})</b> pada hari ini. Pengesahan ini berpotensi berunsur penipuan.</p>
+        </div>
+      `;
+    } else {
+      alertConfig.html = `
+        <div class="mb-4"><p class="text-sm font-bold text-slate-700">Mengesahkan rekod Lapor Kendiri <b>${cleanVal} Jam</b> untuk <b>${m.nama}</b>?</p></div>
+        <div class="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl text-left">
+          <p class="text-[10px] font-black text-emerald-600 uppercase tracking-widest mb-1"><i class="fas fa-shield-check mr-1"></i> Semakan Jadual Lulus</p>
+          <p class="text-[9px] font-bold text-emerald-500 uppercase leading-relaxed">Anggota disahkan mempunyai jadual penugasan <b>(${rosterVal})</b> pada hari ini.</p>
+        </div>
+      `;
+    }
+
+    Swal.fire(alertConfig).then((result) => {
+      if (result.isConfirmed) {
+        let backupVal = st.db.attendance[key];
+        st.db.attendance[key] = cleanVal;
+        st.renderData();
+
+        if (typeof google !== 'undefined' && google.script) {
+          google.script.run
+            .withSuccessHandler((res) => {
+              if (res && res.success === false) {
+                st.db.attendance[key] = backupVal;
+                st.renderData();
+                return alertMsg(res.msg, 'error');
+              }
+              alertMsg('Kehadiran Disahkan Secara Rasmi!', 'success');
+            })
+            .withFailureHandler(err => {
+              st.db.attendance[key] = backupVal;
+              st.renderData();
+              alertMsg('Gagal: ' + (err.message || err), 'error');
+            })
+            .saveCalendarEntrySecure(sessionStorage.getItem('relaToken'), 'att', key, cleanVal);
+        } else {
+          alertMsg('Disahkan (Mod Demo)', 'success');
+        }
+      }
+    });
+  }
+
+  // Menolak laporan kendiri salah/luar jadual yang dikemukakan anggota (Optimistic UI)
+  function rejectPendingJS(key) {
+    const st = window.appState;
+    const parts = key.split('-');
+    if (parts.length < 5) return;
+    const memId = parts[1];
+    const m = (st.membersMap && st.membersMap[memId]) || st.db.members.find(x => x.id === memId) || { nama: 'Anggota' };
+
+    Swal.fire({
+      title: 'Tolak Laporan?',
+      html: `<p class="text-sm font-bold text-slate-700">Adakah anda pasti mahu menolak dan memadam rekod Lapor Kendiri untuk <b>${m.nama}</b> secara kekal?</p>`,
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#ef4444',
+      cancelButtonColor: '#94a3b8',
+      confirmButtonText: 'Ya, Tolak & Padam',
+      cancelButtonText: 'Batal',
+      customClass: { popup: 'rounded-3xl' }
+    }).then((result) => {
+      if (result.isConfirmed) {
+        let backupVal = st.db.attendance[key];
+        delete st.db.attendance[key];
+        st.renderData();
+
+        if (typeof google !== 'undefined' && google.script) {
+          google.script.run
+            .withSuccessHandler((res) => {
+              if (res && res.success === false) {
+                st.db.attendance[key] = backupVal;
+                st.renderData();
+                return alertMsg(res.msg, 'error');
+              }
+              alertMsg('Laporan Ditolak & Dipadam', 'success');
+            })
+            .withFailureHandler(err => {
+              st.db.attendance[key] = backupVal;
+              st.renderData();
+              alertMsg('Ralat: ' + (err.message || err), 'error');
+            })
+            .saveCalendarEntrySecure(sessionStorage.getItem('relaToken'), 'att', key, '');
+        } else {
+          alertMsg('Ditolak (Mod Demo)', 'success');
+        }
+      }
+    });
+  }
+
+  // Enjin Pembaca & Penyelesai Waktu Sesi (Clock-In / Clock-Out) Berasaskan Roster
+  function resolveAttendanceDisplay(val, rosterVal) {
+    if (!val || val === 'X' || val === 'OFF' || val === '') {
+      return { inTime: '-', outTime: '-', duration: '-', status: 'Tiada Rekod' };
+    }
+    if (val.startsWith('IN:')) {
+      const ms = parseInt(val.split(':')[1], 10);
+      const date = new Date(ms);
+      const inTime = date.toLocaleTimeString('en-MY', { hour: '2-digit', minute: '2-digit', hour12: true });
+      return { inTime: inTime, outTime: 'Sesi Aktif', duration: 'Aktif', status: 'Aktif' };
+    }
+
+    // Pecah data completed/pending sessions
+    const cleanVal = val.split('|')[0].replace('?', '');
+    const hrs = parseFloat(cleanVal);
+    if (isNaN(hrs) || hrs <= 0) {
+      return { inTime: '-', outTime: '-', duration: '-', status: 'Tiada Rekod' };
+    }
+
+    let inTime = "08:00 PG";
+    let outTime = "16:00 PTG";
+    const rVal = String(rosterVal || '').toUpperCase();
+
+    if (hrs === 12) {
+      if (rVal === 'PAGI') {
+        inTime = "08:00 PG";
+        outTime = "20:00 MLM";
+      } else if (rVal === 'MALAM') {
+        inTime = "20:00 MLM";
+        outTime = "08:00 PG";
+      } else {
+        inTime = "08:00 PG";
+        outTime = "20:00 MLM";
+      }
+    } else if (hrs === 9) {
+      if (rVal === 'PAGI') {
+        inTime = "08:00 PG";
+        outTime = "17:00 PTG";
+      } else if (rVal === 'PETANG') {
+        inTime = "15:00 PTG";
+        outTime = "00:00 MLM";
+      } else if (rVal === 'MALAM') {
+        inTime = "23:00 MLM";
+        outTime = "08:00 PG";
+      }
+    } else if (hrs === 8) {
+      if (rVal === 'PAGI') {
+        inTime = "08:00 PG";
+        outTime = "16:00 PTG";
+      } else if (rVal === 'PETANG') {
+        inTime = "16:00 PTG";
+        outTime = "00:00 MLM";
+      } else if (rVal === 'MALAM') {
+        inTime = "00:00 MLM";
+        outTime = "08:00 PG";
+      }
+    } else {
+      inTime = "08:00 PG";
+      const endHour = (8 + Math.round(hrs)) % 24;
+      const ampm = endHour >= 12 ? (endHour >= 20 ? "MLM" : "PTG") : "PG";
+      const displayHr = endHour > 12 ? endHour - 12 : (endHour === 0 ? 12 : endHour);
+      outTime = `${String(displayHr).padStart(2, '0')}:00 ${ampm}`;
+    }
+
+    const isPending = val.includes('?');
+    return {
+      inTime: inTime,
+      outTime: outTime,
+      duration: `${hrs} Jam`,
+      status: isPending ? 'Menunggu Pengesahan' : 'Selesai'
+    };
+  }
+
+  // ==============================================================
+  // 3. PENDAFTARAN KOMPONEN DAN STATE DENGAN PERISTIWA ALPINE:INIT
+  // ==============================================================
+  document.addEventListener('alpine:init', () => {
+    Alpine.data('appData', () => ({
+      loading: true,
+      isAuth: false,
+      loginMode: 'main',
+      role: 'admin',
+      user: '',
+      sidebarOpen: false,
+      locDropdownOpen: false,
+      page: 'dashboard',
+      month: new Date().getMonth() + 1,
+      year: new Date().getFullYear(),
+      locId: 'all',
+      allowedLocs: 'all',
+      db: { settings: {}, locations: [], supervisors: [], members: [], attendance: {}, roster: {} },
+      monthsShort: M_SHORT,
+      previewAttDay: new Date().getDate(),
+      previewRosDay: new Date().getDate(),
+      rosFilter: 'ALL',
+      pdfPreview: { open: false, url: '', title: '', filename: '', doc: null },
+      loginForms: { adminPass: '', userId: '', userPass: '' },
+      forgotForms: { email: '', otp: '', newPass: '', confirmPass: '', step: 1 },
+
+      // Ditambah isBulk dan selectedDays untuk menyokong ciri Mod Pukal Kehadiran harian
+      calModal: { open: false, mode: 'att', memId: null, memName: '', selDay: null, isBulk: false, selectedDays: [] },
+      formModal: { open: false, title: '' },
+      kioskState: { kp: '', active: false, timer: null, countdownTimer: null, countdown: 15 },
+      navItems: [
+        { id: 'dashboard', label: 'Dashboard', icon: 'fa-chart-pie', adminOnly: false },
+        { id: 'attendance', label: 'Kehadiran Harian', icon: 'fa-calendar-check', adminOnly: false },
+        { id: 'roster', label: 'Jadual Syif', icon: 'fa-clock', adminOnly: false },
+        { id: 'staff', label: 'Pangkalan Anggota', icon: 'fa-users', adminOnly: false },
+        { id: 'reports', label: 'Janaan Laporan', icon: 'fa-file-pdf', adminOnly: false },
+        { id: 'settings', label: 'Tetapan Sistem', icon: 'fa-gears', adminOnly: true }
+      ],
+
+      init() {
+        document.addEventListener('toggle-loading', (e) => this.loading = e.detail);
+
+        // Membaca sesi sedia ada bagi mengekalkan keadaan sistem semasa penyegaran semula tab pelayar
+        const savedSession = sessionStorage.getItem('relaSession');
+        if (savedSession) {
+          try {
+            const s = JSON.parse(savedSession);
+            this.isAuth = s.isAuth;
+            this.role = s.role;
+            this.user = s.user;
+            this.locId = s.locId;
+            this.allowedLocs = s.allowedLocs || s.locId;
+            this.page = s.page || 'dashboard';
+            if (s.month) this.month = s.month;
+            if (s.year) this.year = s.year;
+          } catch (e) {}
+        }
+        this.syncFromServer(true);
+      },
+
+      getYears() { 
+        const cur = new Date().getFullYear(); 
+        return [cur - 1, cur, cur + 1, cur + 2]; 
+      },
+
+      userInitials() { 
+        return this.user ? this.user.substring(0, 2).toUpperCase() : 'AD'; 
+      },
+
+      getActiveLocName() {
+        if (this.locId === 'all') return 'KESELURUHAN';
+        const l = this.db.locations.find(x => x.id === this.locId);
+        return l ? l.name : 'Tidak Diketahui';
+      },
+
+      // Mengesan sekiranya bulan perakaunan ditutup sama ada melalui setting admin atau auto-lock (5hb)
+      isMonthLocked() {
+        if (this.role === 'admin') {
+          return this.db.settings[`lock_${this.year}_${this.month}`] === 'true';
+        }
+        const manualLockKey = `lock_${this.year}_${this.month}`;
+        if (this.db.settings[manualLockKey] === 'true') {
+          return true;
+        }
+
+        // Menggunakan Zon Waktu Standard Kuala Lumpur (Johor) secara tegar
+        const klTimeStr = new Date().toLocaleString("en-US", { timeZone: "Asia/Kuala_Lumpur" });
+        const klTime = new Date(klTimeStr);
+        const currY = klTime.getFullYear();
+        const currM = klTime.getMonth() + 1;
+        const currD = klTime.getDate();
+
+        // Bulan lepas sentiasa dikunci bagi menghalang modifikasi data belakang tarikh (backdated)
+        const isPastMonth = (this.year < currY) || (this.year === currY && this.month < currM);
+        if (isPastMonth) {
+          return currD >= 5; // Hanya dikunci jika melepasi atau sama dengan 5hb bulan semasa
+        }
+        return false;
+      },
+
+      isRosterLocked(day = null) {
+        if (this.role === 'admin') {
+          return this.db.settings[`lock_${this.year}_${this.month}`] === 'true';
+        }
+        if (this.db.settings[`lock_${this.year}_${this.month}`] === 'true') {
+          return true;
+        }
+        const klTimeStr = new Date().toLocaleString("en-US", { timeZone: "Asia/Kuala_Lumpur" });
+        const klTime = new Date(klTimeStr);
+        const currY = klTime.getFullYear();
+        const currM = klTime.getMonth() + 1;
+        const currD = klTime.getDate();
+        const selectedDate = new Date(this.year, this.month - 1, 1);
+        const currentDate = new Date(currY, currM - 1, 1);
+
+        if (selectedDate < currentDate) {
+          return currD >= 5;
+        } else if (selectedDate.getTime() === currentDate.getTime()) {
+          return currD >= 5;
+        } else {
+          return false;
+        }
+      },
+
+      isAttendanceLocked(day, memId) {
+        if (this.role === 'admin') {
+          return this.db.settings[`lock_${this.year}_${this.month}`] === 'true';
+        }
+        if (this.db.settings[`lock_${this.year}_${this.month}`] === 'true') {
+          return true;
+        }
+        const klTimeStr = new Date().toLocaleString("en-US", { timeZone: "Asia/Kuala_Lumpur" });
+        const klTime = new Date(klTimeStr);
+        const currY = klTime.getFullYear();
+        const currM = klTime.getMonth() + 1;
+        const currD = klTime.getDate();
+        const selectedDate = new Date(this.year, this.month - 1, 1);
+        const currentDate = new Date(currY, currM - 1, 1);
+
+        if (selectedDate > currentDate) {
+          return true;
+        }
+        if (selectedDate < currentDate) {
+          return currD >= 5;
+        }
+        if (currD < 5) {
+          return false;
+        }
+        const m = this.db.members.find(x => x.id === memId);
+        if (!m) return true;
+        const loc = (this.locId === 'all' || this.allowedLocs.includes(',') || this.page === 'reports') ? m.locId : this.locId;
+        const k = `${loc}-${memId}-${this.year}-${this.month}-${day}`;
+        const val = this.db.attendance[k];
+        if (val && val !== '' && val !== 'X' && val !== 'OFF') {
+          return false; // Penyelia dibenarkan edit jika jam bertugas tidak betul
+        } else {
+          return true; // Disekat jika tiada maklumat jam bertugas anggota pada hari tersebut
+        }
+      },
+
+      getFilteredMems() {
+        if (this.locId === 'all') {
+          if (this.role === 'admin') return this.db.members;
+          const allowed = this.allowedLocs.split(',');
+          return this.db.members.filter(m => allowed.includes(m.locId));
+        }
+        return this.db.members.filter(m => m.locId === this.locId);
+      },
+
+      hasLocationDropdown() {
+        if (this.role === 'admin') return true;
+        return this.allowedLocs && this.allowedLocs.includes(',');
+      },
+
+      getAvailableLocations() {
+        if (this.role === 'admin') return this.db.locations;
+        const allowed = this.allowedLocs.split(',');
+        return this.db.locations.filter(l => allowed.includes(l.id));
+      },
+
+      // Sokongan mod senyap (silent) di latar belakang bagi mengelakkan ralat masa tamat sambungan
+      syncFromServer(isInit = false, silent = false) {
+        if (!silent) showLoading(true);
+        if (typeof google !== 'undefined' && google.script) {
+          google.script.run.withSuccessHandler(res => {
+            if (res && res.success) {
+              this.db = res.db;
+              this.isAuth = true;
+              this.role = res.session.role;
+              this.user = res.session.user;
+              this.allowedLocs = res.session.locId;
+
+              // Menapis sifar hadapan bagi paparan antaramuka sahaja (Sanitization)
+              if (this.db && this.db.members) {
+                this.db.members = this.db.members.map(m => ({
+                  ...m,
+                  kp: String(m.kp || '').replace(/'/g, ''),
+                  tel: String(m.tel || '').replace(/'/g, ''),
+                  akaun: String(m.akaun || '').replace(/'/g, ''),
+                  noAhli: String(m.noAhli || '').replace(/'/g, '').trim(),
+                  sme: String(m.sme || 'TIDAK').toUpperCase().trim()
+                }));
+              }
+
+              // Pengurusan lokaliti jagaan bagi Penyelia
+              if (this.role !== 'admin') {
+                const allowedArr = this.allowedLocs.split(',');
+                if (this.locId === 'all' || !allowedArr.includes(this.locId)) {
+                  this.locId = allowedArr[0];
+                }
+              } else if (isInit && this.locId === 'all') {
+                this.locId = 'all';
+              }
+            } else {
+              sessionStorage.removeItem("relaToken");
+              sessionStorage.removeItem("relaSession");
+              this.isAuth = false;
+            }
+            if (this.isAuth) {
+              this.renderData();
+            }
+            if (!silent) showLoading(false);
+          }).withFailureHandler(err => {
+            if (!silent) showLoading(false);
+            alertMsg('Ralat Pelayan: ' + (err.message || err || 'Terputus Hubungan'), 'error');
+          }).getSecureAppData(sessionStorage.getItem('relaToken'));
+        } else {
+          // Simulasi bagi mod luar talian (Demo Offline)
+          setTimeout(() => { if (!silent) showLoading(false); }, 800);
+        }
+      },
+
+      handleLogin(mode) {
+        showLoading(true);
+        if (typeof google === 'undefined' || !google.script) {
+          showLoading(false);
+          return alertMsg('Sistem mesti dijalankan melalui pelayan GAS.', 'error');
+        }
+
+        if (mode === 'admin') {
+          google.script.run.withSuccessHandler(res => {
+            showLoading(false);
+            if (!res.success) return alertMsg(res.msg, 'error');
+
+            sessionStorage.setItem('relaToken', res.token);
+            sessionStorage.setItem('relaSession', JSON.stringify({
+              isAuth: true,
+              role: res.role,
+              user: res.user,
+              locId: 'all',
+              allowedLocs: 'all',
+              page: 'dashboard',
+              month: this.month,
+              year: this.year
+            }));
+
+            this.isAuth = true;
+            this.role = res.role;
+            this.user = res.user;
+            this.allowedLocs = 'all';
+            this.locId = 'all';
+            this.page = 'dashboard';
+
+            this.syncFromServer(false);
+            alertMsg('Selamat Datang, Tuan Pentadbir!');
+          }).withFailureHandler(err => {
+            showLoading(false);
+            alertMsg('Ralat Sambungan: ' + (err.message || err || 'Sila cuba lagi'), 'error');
+          }).loginAdmin(this.loginForms.adminPass);
+        }
+
+        if (mode === 'penyelia') {
+          google.script.run.withSuccessHandler(res => {
+            showLoading(false);
+            if (!res.success) return alertMsg(res.msg, 'error');
+            const initialLoc = res.locId.split(',')[0];
+
+            sessionStorage.setItem('relaToken', res.token);
+            sessionStorage.setItem('relaSession', JSON.stringify({
+              isAuth: true,
+              role: res.role,
+              user: res.user,
+              locId: initialLoc,
+              allowedLocs: res.locId,
+              page: 'dashboard',
+              month: this.month,
+              year: this.year
+            }));
+
+            this.isAuth = true;
+            this.role = res.role;
+            this.user = res.user;
+            this.allowedLocs = res.locId;
+            this.locId = initialLoc;
+            this.page = 'dashboard';
+
+            this.syncFromServer(false);
+            alertMsg('Log masuk Penyelia berjaya.');
+          }).withFailureHandler(err => {
+            showLoading(false);
+            alertMsg('Ralat Sambungan: ' + (err.message || err || 'Sila cuba lagi'), 'error');
+          }).loginSupervisor(this.loginForms.userId, this.loginForms.userPass);
+        }
+      },
+
+      logout() {
+        const token = sessionStorage.getItem('relaToken');
+        if (typeof google !== 'undefined' && google.script && token) {
+          google.script.run.logoutUser(token);
+        }
+        this.isAuth = false;
+        this.loginMode = 'main';
+        this.loginForms.adminPass = '';
+        this.loginForms.userPass = '';
+        this.sidebarOpen = false;
+        this.page = 'dashboard';
+        sessionStorage.removeItem('relaSession');
+        sessionStorage.removeItem('relaToken');
+      },
+
+      setPage(p) {
+        this.page = p;
+        if (this.isAuth) {
+          let s = JSON.parse(sessionStorage.getItem('relaSession') || '{}');
+          s.page = p;
+          s.locId = this.locId;
+          s.allowedLocs = this.allowedLocs;
+          sessionStorage.setItem('relaSession', JSON.stringify(s));
+        }
+        this.renderData();
+        if (window.innerWidth < 1024) this.sidebarOpen = false;
+        document.getElementById('scroll-main').scrollTo(0, 0);
+      },
+
+      changeLoc(id) {
+        this.locId = id;
+        if (this.isAuth) {
+          let s = JSON.parse(sessionStorage.getItem('relaSession') || '{}');
+          s.locId = id;
+          sessionStorage.setItem('relaSession', JSON.stringify(s));
+        }
+        this.locDropdownOpen = false;
+        this.renderData();
+      },
+
+      toggleMonthLock() {
+        if (this.role !== 'admin') return;
+        const key = `lock_${this.year}_${this.month}`;
+        const isLocked = this.isMonthLocked();
+        const newVal = isLocked ? 'false' : 'true';
+        this.db.settings[key] = newVal;
+
+        if (typeof google !== 'undefined' && google.script) {
+          google.script.run.saveSettingsBulkSecure(sessionStorage.getItem('relaToken'), { [key]: newVal });
+        }
+        alertMsg(newVal === 'true' ? 'Bulan Ini Dikunci' : 'Kunci Dibuka');
+        this.renderData();
+      },
+
+      renderData() {
+        window.appState = this;
+        renderActivePageHTML(this);
+      },
+
+      asyncValidateKioskUser(callback) {
+        if (!this.kioskState.kp || this.kioskState.kp.trim() === '') {
+          return alertMsg('Sila masukkan No KP anda terlebih dahulu.', 'warning');
+        }
+
+        showLoading(true);
+        if (typeof google !== 'undefined' && google.script) {
+          google.script.run
+            .withSuccessHandler(res => {
+              showLoading(false);
+              if (res.success) {
+                callback(res);
+              } else {
+                Swal.fire({
+                  title: 'Akses Ditolak!',
+                  html: res.msg,
+                  icon: 'error',
+                  confirmButtonColor: '#ef4444',
+                  customClass: { popup: 'rounded-3xl' }
+                });
+              }
+            })
+            .withFailureHandler(err => {
+              showLoading(false);
+              alertMsg('Ralat Sambungan Pelayan: ' + (err.message || err), 'error');
+            })
+            .checkKioskEligibility(this.kioskState.kp);
+        } else {
+          showLoading(false);
+          alertMsg('Fungsi ini memerlukan pelayan GAS.', 'error');
+        }
+      },
+
+      startKioskQR() {
+        this.asyncValidateKioskUser((user) => {
+          this.kioskState.kp = user.kp;
+          this.kioskState.active = true;
+          this.generateLiveQR();
+          this.kioskState.timer = setInterval(() => this.generateLiveQR(), 15000);
+        });
+      },
+
+      generateLiveQR() {
+        const container = document.getElementById('kiosk-qr-container');
+        container.innerHTML = '';
+        const payload = `${this.kioskState.kp.trim()}|${Date.now()}`;
+
+        new QRCode(container, {
+          text: payload,
+          width: 200,
+          height: 200,
+          colorDark: "#0f172a",
+          colorLight: "#ffffff",
+          correctLevel: QRCode.CorrectLevel.M
+        });
+
+        this.kioskState.countdown = 15;
+        clearInterval(this.kioskState.countdownTimer);
+        this.kioskState.countdownTimer = setInterval(() => {
+          if (this.kioskState.countdown > 0) this.kioskState.countdown--;
+        }, 1000);
+      },
+
+      stopKioskQR() {
+        this.kioskState.active = false;
+        this.kioskState.kp = '';
+        clearInterval(this.kioskState.timer);
+        clearInterval(this.kioskState.countdownTimer);
+        this.loginMode = 'main';
+      },
+
+      openPublicScanner() {
+        this.asyncValidateKioskUser((user) => {
+          const scannerUrl = (this.db && this.db.settings && this.db.settings.github_scanner_url) ? this.db.settings.github_scanner_url : SCANNER_URL;
+          if (!scannerUrl || scannerUrl.trim() === '') return alertMsg('Sila tetapkan pautan pengimbas di Tetapan Pentadbir dahulu.', 'warning');
+          if (!WEB_APP_URL || WEB_APP_URL.trim() === '') return alertMsg('Web App URL tidak sah.', 'error');
+
+          const url = new URL(scannerUrl);
+          url.searchParams.append('api', WEB_APP_URL);
+          url.searchParams.append('token', 'KIOSK_MODE');
+          url.searchParams.append('locId', 'AUTO');
+          url.searchParams.append('scannerId', user.kp);
+          window.open(url.toString(), '_blank');
+        });
+      },
+
+      submitSelfReport() {
+        this.asyncValidateKioskUser((user) => {
+          Swal.fire({
+            title: 'Lapor Diri Kendiri?',
+            text: 'Sila hantar jika Penyelia tiada di lapangan. Rekod anda memerlukan pengesahan lanjut.',
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonColor: '#f59e0b',
+            cancelButtonColor: '#94a3b8',
+            confirmButtonText: 'Ya, Lapor Kendiri',
+            cancelButtonText: 'Batal',
+            customClass: { popup: 'rounded-3xl' }
+          }).then((result) => {
+            if (result.isConfirmed) {
+              this._postKioskAction('checkout_only', 'Kehadiran Direkod', user.kp);
+            }
+          });
+        });
+      },
+
+      submitClockInOnly() {
+        this.asyncValidateKioskUser((user) => {
+          Swal.fire({
+            title: 'Mula Syif (Pos Kosong)?',
+            text: 'Lapor mula bertugas sekiranya tiada rakan pengganti sebelum ini.',
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonColor: '#3b82f6',
+            cancelButtonColor: '#94a3b8',
+            confirmButtonText: 'Ya, Lapor Masuk',
+            cancelButtonText: 'Batal',
+            customClass: { popup: 'rounded-3xl' }
+          }).then((result) => {
+            if (result.isConfirmed) {
+              this._postKioskAction('clockin_only', 'Syif Bermula', user.kp);
+            }
+          });
+        });
+      },
+
+      _postKioskAction(actionType, successTitle, kp) {
+        showLoading(true);
+        if (typeof google !== 'undefined' && google.script) {
+          const payload = { token: 'KIOSK_MODE', locId: 'AUTO', scannerId: kp, scannedData: '', action: actionType };
+          fetch(WEB_APP_URL, { method: 'POST', body: JSON.stringify(payload) }).then(res => res.json()).then(data => {
+            showLoading(false);
+            if (data.success) {
+              Swal.fire({ icon: 'success', title: successTitle, text: data.msg, customClass: { popup: 'rounded-3xl' } });
+              this.loginMode = 'main';
+              this.kioskState.kp = '';
+            } else {
+              alertMsg(data.msg, 'error');
+            }
+          }).catch(err => {
+            showLoading(false);
+            alertMsg('Gagal menyambung ke Pelayan.', 'error');
+          });
+        }
+      },
+
+      handleRequestOTP() {
+        showLoading(true);
+        if (typeof google !== 'undefined' && google.script) {
+          google.script.run.withSuccessHandler(res => {
+            showLoading(false);
+            if (res.success) {
+              alertMsg(res.msg, 'success');
+              this.forgotForms.step = 2;
+            } else {
+              alertMsg(res.msg, 'error');
+            }
+          }).withFailureHandler(err => {
+            showLoading(false);
+            alertMsg('Ralat OTP: ' + (err.message || err), 'error');
+          }).sendOTP(this.forgotForms.email);
+        } else {
+          showLoading(false);
+          alertMsg('Kod OTP dihantar (Demo)', 'success');
+          this.forgotForms.step = 2;
+        }
+      },
+
+      handleVerifyOTPAndReset() {
+        if (this.forgotForms.newPass !== this.forgotForms.confirmPass) {
+          return alertMsg('Kata laluan tidak sepadan!', 'error');
+        }
+        if (this.forgotForms.newPass.length < 6) {
+          return alertMsg('Kata laluan sekurang-kurangnya 6 aksara!', 'error');
+        }
+        showLoading(true);
+        if (typeof google !== 'undefined' && google.script) {
+          google.script.run.withSuccessHandler(res => {
+            showLoading(false);
+            if (res.success) {
+              alertMsg(res.msg, 'success');
+              this.loginMode = 'main';
+              this.forgotForms = { email: '', otp: '', newPass: '', confirmPass: '', step: 1 };
+            } else {
+              alertMsg(res.msg, 'error');
+            }
+          }).withFailureHandler(err => {
+            showLoading(false);
+            alertMsg('Ralat: ' + (err.message || err), 'error');
+          }).verifyOTPAndResetPassword(this.forgotForms.email, this.forgotForms.otp, this.forgotForms.newPass);
+        } else {
+          showLoading(false);
+          alertMsg('Selesai (Demo Offline)', 'success');
+          this.loginMode = 'main';
+          this.forgotForms = { email: '', otp: '', newPass: '', confirmPass: '', step: 1 };
+        }
+      },
+
+      savePeriod() {
+        if (this.isAuth) {
+          let s = JSON.parse(sessionStorage.getItem('relaSession') || '{}');
+          s.month = this.month;
+          s.year = this.year;
+          sessionStorage.setItem('relaSession', JSON.stringify(s));
+        }
+      }
+    }));
+  });
+
+  // ==============================================================
+  // 4. LOGIK INTERAKSI PENUKARAN KATA LALUAN (PREMIUM)
+  // ==============================================================
+  function openChangePasswordModalJS() {
+    const st = window.appState;
+    st.formModal.title = 'Tukar Kata Laluan Sesi';
+    document.getElementById('form-body-inject').innerHTML = `
+      <form id="f-change-pass" class="space-y-6">
+        <div>
+          <label class="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-2">Kata Laluan Lama</label>
+          <input type="password" name="oldPass" required class="w-full mt-2 px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-bold outline-none transition-all focus:bg-white focus:border-blue-400">
+        </div>
+        <div>
+          <label class="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-2">Kata Laluan Baru (Min 6 Aksara)</label>
+          <input type="password" name="newPass" required class="w-full mt-2 px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-bold outline-none transition-all focus:bg-white focus:border-blue-400">
+        </div>
+        <div>
+          <label class="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-2">Sahkan Kata Laluan Baru</label>
+          <input type="password" name="confirmNewPass" required class="w-full mt-2 px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-bold outline-none transition-all focus:bg-white focus:border-blue-400">
+        </div>
+        <button type="submit" class="w-full py-5 bg-gradient-to-r from-amber-500 to-orange-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl active:scale-95 transition-all">Kemaskini Laluan</button>
+      </form>`;
+
+    document.getElementById('f-change-pass').onsubmit = e => {
+      e.preventDefault();
+      const data = Object.fromEntries(new FormData(e.target).entries());
+      if (data.newPass.length < 6) return alertMsg('Kata laluan baru sekurang-kurangnya 6 aksara!', 'error');
+      if (data.newPass !== data.confirmNewPass) return alertMsg('Sahkan kata laluan tidak sepadan!', 'error');
+
+      showLoading(true);
+      if (typeof google !== 'undefined' && google.script) {
+        google.script.run
+          .withSuccessHandler((res) => {
+            showLoading(false);
+            if (res.success) {
+              st.formModal.open = false;
+              Swal.fire({
+                title: 'Berjaya!',
+                text: res.msg,
+                icon: 'success',
+                confirmButtonColor: '#3b82f6',
+                customClass: { popup: 'rounded-3xl' }
+              });
+            } else {
+              alertMsg(res.msg, 'error');
+            }
+          })
+          .withFailureHandler(err => {
+            showLoading(false);
+            alertMsg('Ralat: ' + (err.message || err), 'error');
+          })
+          .changeMyPassword(sessionStorage.getItem('relaToken'), data.oldPass, data.newPass);
+      } else {
+        showLoading(true);
+        st.formModal.open = false;
+        alertMsg('Berjaya Tukar Laluan (Mod Demo Offline)', 'success');
+      }
+    };
+    st.formModal.open = true;
+  }
+
+  // ==============================================================
+  // 5. ATURAN REKA BENTUK ENJIN PAKSA KELUAR & SAPU BERSIH (NEW)
+  // ==============================================================
+  function forceClockOutJS(key) {
+    const st = window.appState;
+    const parts = key.split('-');
+    if (parts.length < 5) return;
+    const memId = parts[1];
+    const m = (st.membersMap && st.membersMap[memId]) || st.db.members.find(x => x.id === memId) || { nama: 'Anggota' };
+    const locId = parts[0];
+    const locObj = st.db.locations.find(l => l.id === locId) || {};
+    const defaultFormat = parseFloat(locObj.format || 8);
+
+    Swal.fire({
+      title: 'Paksa Log Keluar (Force Clock-Out)?',
+      html: `<p class="text-sm font-bold text-slate-700">Tamatkan syif bertugas untuk <b>${m.nama}</b> yang tersangkut.</p>`,
+      icon: 'warning',
+      input: 'select',
+      inputOptions: {
+        '4': '4 Jam (Separuh Hari)',
+        '8': '8 Jam (Standard)',
+        '9': '9 Jam (Operasi Khas)',
+        '12': '12 Jam (Kawasan Khas)',
+        [defaultFormat.toString()]: `${defaultFormat} Jam (Format Lalai Cawangan)`,
+        'OFF': 'OFF / Kosongkan Sesi'
+      },
+      inputValue: defaultFormat.toString(),
+      showCancelButton: true,
+      confirmButtonColor: '#f43f5e',
+      cancelButtonColor: '#94a3b8',
+      confirmButtonText: 'Ya, Tamatkan Sesi',
+      cancelButtonText: 'Batal',
+      customClass: { popup: 'rounded-3xl' }
+    }).then((result) => {
+      if (result.isConfirmed) {
+        const val = result.value;
+        let finalVal = val;
+        if (val !== 'OFF' && val !== '') {
+          finalVal = val + '|SISTEM: PAKSA KELUAR (LUPA CLOCK-OUT)';
+        } else {
+          finalVal = ''; // Padam sesi
+        }
+
+        showLoading(true);
+        if (typeof google !== 'undefined' && google.script) {
+          google.script.run
+            .withSuccessHandler((res) => {
+              showLoading(false);
+              if (res && res.success === false) return alertMsg(res.msg, 'error');
+              st.syncFromServer(false, true); // Gunakan penyelarasan senyap
+              alertMsg('Anggota Berjaya Di-Clock-Out!', 'success');
+            })
+            .withFailureHandler(err => {
+              showLoading(false);
+              alertMsg('Ralat: ' + (err.message || err), 'error');
+            })
+            .saveCalendarEntrySecure(sessionStorage.getItem('relaToken'), 'att', key, finalVal);
+        } else {
+          showLoading(false);
+          if (finalVal === '') delete st.db.attendance[key];
+          else st.db.attendance[key] = finalVal;
+          st.renderData();
+          alertMsg('Clock-out Berjaya (Mod Demo)', 'success');
+        }
+      }
+    });
+  }
+
+  // Melaksanakan sapu bersih kelompok menggunakan satu (1) transaksi tunggal (Batch Processing)
+  function bulkForceClockOutJS() {
+    const st = window.appState;
+    const actives = getActiveWorkers(st);
+    // Mengesan sesi aktif yang tersangkut melebihi 14 jam (Lupa clock-out)
+    const stuck = actives.filter(a => parseFloat(a.hours) > 14);
+
+    if (stuck.length === 0) {
+      return Swal.fire({
+        title: 'Tiada Sesi Tersangkut',
+        text: 'Tiada anggota yang bertugas melebihi 14 jam dikesan saat ini.',
+        icon: 'info',
+        customClass: { popup: 'rounded-3xl' }
+      });
+    }
+
+    Swal.fire({
+      title: 'Sapu Bersih Sesi Tersangkut?',
+      html: `<p class="text-sm font-bold text-slate-700">Sistem mengesan <b>${stuck.length} anggota</b> yang bertugas melebihi 14 jam (lupa clock-out).<br><br>Adakah anda mahu menyelaraskan semua sesi ini secara automatik ke jam syif standard cawangan masing-masing?</p>`,
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#ef4444',
+      cancelButtonColor: '#94a3b8',
+      confirmButtonText: 'Ya, Sapu Bersih',
+      cancelButtonText: 'Batal',
+      customClass: { popup: 'rounded-3xl' }
+    }).then((result) => {
+      if (result.isConfirmed) {
+        showLoading(true);
+        const keysToReset = stuck.map(item => item.key);
+
+        if (typeof google !== 'undefined' && google.script) {
+          google.script.run
+            .withSuccessHandler((res) => {
+              showLoading(false);
+              if (res.success) {
+                st.syncFromServer(false, true); // Penyelarasan senyap di latar belakang
+                Swal.fire({
+                  title: 'Sapu Bersih Selesai!',
+                  text: `${res.count} sesi lapor diri yang tersangkut telah berjaya diselaraskan secara kelompok!`,
+                  icon: 'success',
+                  customClass: { popup: 'rounded-3xl' }
+                });
+              } else {
+                alertMsg(res.msg, 'error');
+              }
+            })
+            .withFailureHandler((err) => {
+              showLoading(false);
+              alertMsg('Ralat sapu bersih: ' + (err.message || err), 'error');
+            })
+            .bulkForceClockOutSecure(sessionStorage.getItem('relaToken'), keysToReset);
+        } else {
+          showLoading(false);
+          // Mod Demo offline
+          stuck.forEach(item => {
+            const locId = item.key.split('-')[0];
+            const locObj = st.db.locations.find(l => l.id === locId) || {};
+            const defaultFormat = parseFloat(locObj.format || 8);
+            st.db.attendance[item.key] = `${defaultFormat}|SISTEM: AUTO-RESET BULK`;
+          });
+          st.renderData();
+          alertMsg('Sapu bersih selesai (Mod Demo)', 'success');
+        }
+      }
+    });
+  }
+</script>
